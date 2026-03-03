@@ -1,0 +1,60 @@
+﻿workflows:
+  ios-release:
+    name: iOS Release
+    max_build_duration: 30
+    instance_type: mac_mini_m2
+    environment:
+      flutter: stable
+      xcode: latest
+    scripts:
+      - name: Get dependencies
+        script: flutter pub get
+
+      - name: Install CocoaPods
+        script: |
+          cd ios
+          pod install
+
+      - name: Generate Flutter xcconfig (no build)
+        script: flutter build ios --config-only --release --no-codesign
+
+      - name: Build with xcodebuild (unsigned)
+        script: |
+          cd ios
+          xcodebuild \
+            -workspace Runner.xcworkspace \
+            -scheme Runner \
+            -sdk iphoneos \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -allowProvisioningUpdates \
+            CODE_SIGNING_ALLOWED='NO' \
+            CODE_SIGNING_REQUIRED='NO' \
+            CODE_SIGN_IDENTITY='' \
+            CODE_SIGN_ENTITLEMENTS='' \
+            DEVELOPMENT_TEAM='' \
+            PROVISIONING_PROFILE='' \
+            PROVISIONING_PROFILE_SPECIFIER='' \
+            COMPILER_INDEX_STORE_ENABLE='NO' \
+            EXPANDED_CODE_SIGN_IDENTITY='' \
+            build
+
+      - name: Create unsigned IPA
+        script: |
+          APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "Runner.app" -path "*/Release-iphoneos/*" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: Runner.app not found in DerivedData"
+            echo "Searching all possible locations..."
+            find ~/Library/Developer/Xcode/DerivedData -name "Runner.app" -type d
+            exit 1
+          fi
+          echo "Found Runner.app at: $APP_PATH"
+          mkdir -p /tmp/ipa/Payload
+          cp -r "$APP_PATH" /tmp/ipa/Payload/
+          cd /tmp/ipa
+          zip -r $CM_BUILD_DIR/BuzzaAdmin.ipa Payload/
+          echo "IPA created successfully at $CM_BUILD_DIR/BuzzaAdmin.ipa"
+          ls -la $CM_BUILD_DIR/BuzzaAdmin.ipa
+
+    artifacts:
+      - BuzzaAdmin.ipa
