@@ -9,7 +9,8 @@ class SettingsTab extends StatefulWidget {
   State<SettingsTab> createState() => _SettingsTabState();
 }
 
-class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStateMixin {
+class _SettingsTabState extends State<SettingsTab>
+    with SingleTickerProviderStateMixin {
   Map<String, dynamic> _settings = {};
   String _errorLog = '';
   bool _loading = true;
@@ -31,16 +32,24 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
   }
 
   @override
-  void dispose() { _tabCtrl.dispose(); super.dispose(); }
+  void dispose() {
+    _tabCtrl.dispose();
+    super.dispose();
+  }
 
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
       final d = await AdminApi().getSettings();
-      setState(() { _settings = d; _loading = false; });
+      setState(() {
+        _settings = d;
+        _loading = false;
+      });
     } catch (e) {
       setState(() => _loading = false);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
     }
   }
 
@@ -48,9 +57,14 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
     setState(() => _saving = true);
     try {
       await AdminApi().saveSettings(_settings);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ayarlar kaydedildi ✅'), backgroundColor: AppTheme.success));
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Ayarlar kaydedildi ✅'),
+            backgroundColor: AppTheme.success));
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
     }
     setState(() => _saving = false);
   }
@@ -59,46 +73,136 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
     setState(() => _logLoading = true);
     try {
       final d = await AdminApi().getErrorLog();
-      setState(() { _errorLog = d['content'] ?? 'Boş'; _logLoading = false; });
+      setState(() {
+        _errorLog = d['content'] ?? 'Boş';
+        _logLoading = false;
+      });
     } catch (e) {
-      setState(() { _errorLog = 'Hata: $e'; _logLoading = false; });
+      setState(() {
+        _errorLog = 'Hata: $e';
+        _logLoading = false;
+      });
     }
   }
 
   Future<void> _runSync(String type) async {
     switch (type) {
-      case 'services': setState(() => _syncingServices = true); break;
-      case 'categories': setState(() => _syncingCategories = true); break;
-      case 'descriptions': setState(() => _syncingDescriptions = true); break;
-      case 'all': setState(() => _syncingAll = true); break;
+      case 'services':
+        setState(() => _syncingServices = true);
+        break;
+      case 'categories':
+        setState(() => _syncingCategories = true);
+        break;
+      case 'descriptions':
+        setState(() => _syncingDescriptions = true);
+        break;
+      case 'all':
+        setState(() => _syncingAll = true);
+        break;
     }
     try {
+      late final Map<String, dynamic> result;
       switch (type) {
-        case 'services': await AdminApi().syncServices(); break;
-        case 'categories': await AdminApi().syncCategories(); break;
-        case 'descriptions': await AdminApi().syncDescriptions(); break;
-        case 'all': await AdminApi().syncAll(); break;
+        case 'services':
+          result = await AdminApi().syncServices();
+          break;
+        case 'categories':
+          result = await AdminApi().syncCategories();
+          break;
+        case 'descriptions':
+          result = await AdminApi().syncDescriptions();
+          break;
+        case 'all':
+          result = await AdminApi().syncAll();
+          break;
+        default:
+          result = const <String, dynamic>{};
       }
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${_syncLabel(type)} tamamlandı ✅'), backgroundColor: AppTheme.success));
+      if (mounted) {
+        final hasErrors = _syncHasErrors(result);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_syncResultText(type, result)),
+            backgroundColor: hasErrors ? AppTheme.warning : AppTheme.success,
+          ),
+        );
+      }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$e'), backgroundColor: AppTheme.error),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _syncingServices = false;
+          _syncingCategories = false;
+          _syncingDescriptions = false;
+          _syncingAll = false;
+        });
+      }
     }
-    setState(() {
-      _syncingServices = false;
-      _syncingCategories = false;
-      _syncingDescriptions = false;
-      _syncingAll = false;
-    });
   }
 
   String _syncLabel(String type) {
     switch (type) {
-      case 'services': return 'Servis senkronizasyonu';
-      case 'categories': return 'Kategori senkronizasyonu';
-      case 'descriptions': return 'Açıklama senkronizasyonu';
-      case 'all': return 'Tam senkronizasyon';
-      default: return 'Senkronizasyon';
+      case 'services':
+        return 'Servis senkronizasyonu';
+      case 'categories':
+        return 'Kategori senkronizasyonu';
+      case 'descriptions':
+        return 'Açıklama senkronizasyonu';
+      case 'all':
+        return 'Tam senkronizasyon';
+      default:
+        return 'Senkronizasyon';
     }
+  }
+
+  Map<String, dynamic> _asMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return const <String, dynamic>{};
+  }
+
+  int? _asNullableInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is double) return value.round();
+    if (value is num) return value.toInt();
+    return int.tryParse('$value');
+  }
+
+  bool _syncHasErrors(Map<String, dynamic> result) {
+    final summary = _asMap(result['sync_summary']);
+    final errorCount = _asNullableInt(
+            summary['errors'] ?? result['errors'] ?? result['error_count']) ??
+        0;
+    return errorCount > 0;
+  }
+
+  String _syncResultText(String type, Map<String, dynamic> result) {
+    final summary = _asMap(result['sync_summary']);
+    final updated = _asNullableInt(summary['updated']);
+    final matched = _asNullableInt(summary['matched']);
+    final skipped = _asNullableInt(summary['skipped']);
+    final errors = _asNullableInt(summary['errors']);
+    final total = _asNullableInt(summary['total']);
+
+    final parts = <String>[];
+    if (updated != null) parts.add('$updated guncellendi');
+    if (matched != null) parts.add('$matched eslesti');
+    if (skipped != null) parts.add('$skipped atlandi');
+    if (errors != null && errors > 0) parts.add('$errors hata');
+    if (total != null && parts.isEmpty) parts.add('$total kayit islendi');
+
+    final message = '${summary['message'] ?? result['message'] ?? ''}'.trim();
+    final label = _syncLabel(type);
+
+    if (parts.isNotEmpty) return '$label: ${parts.join(' | ')}';
+    if (message.isNotEmpty) return '$label: $message';
+    return '$label tamamlandi';
   }
 
   Future<void> _dangerAction(String type) async {
@@ -110,11 +214,15 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
         return StatefulBuilder(builder: (ctx2, setSt) {
           return AlertDialog(
             backgroundColor: AppTheme.bgCard,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
             title: Row(children: [
-              const Icon(Icons.warning_amber_rounded, color: AppTheme.error, size: 28),
+              const Icon(Icons.warning_amber_rounded,
+                  color: AppTheme.error, size: 28),
               const SizedBox(width: 10),
-              Text(isReset ? 'Tümünü Sıfırla' : 'Servisleri Sil', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+              Text(isReset ? 'Tümünü Sıfırla' : 'Servisleri Sil',
+                  style: const TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.w700)),
             ]),
             content: Column(
               mainAxisSize: MainAxisSize.min,
@@ -122,24 +230,33 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
               children: [
                 Text(
                   isReset
-                    ? 'TÜM veriler silinecek: servisler, kategoriler, siparişler. Bu işlem geri alınamaz!'
-                    : 'Tüm servisler veritabanından silinecek. Bu işlem geri alınamaz!',
-                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 14),
+                      ? 'TÜM veriler silinecek: servisler, kategoriler, siparişler. Bu işlem geri alınamaz!'
+                      : 'Tüm servisler veritabanından silinecek. Bu işlem geri alınamaz!',
+                  style: const TextStyle(
+                      color: AppTheme.textSecondary, fontSize: 14),
                 ),
                 const SizedBox(height: 16),
-                Text('Onaylamak için "${isReset ? 'SIFIRLA' : 'SIL'}" yazın:', style: const TextStyle(fontSize: 12, color: AppTheme.textMuted)),
+                Text('Onaylamak için "${isReset ? 'SIFIRLA' : 'SIL'}" yazın:',
+                    style: const TextStyle(
+                        fontSize: 12, color: AppTheme.textMuted)),
                 const SizedBox(height: 8),
                 TextField(
-                  decoration: AppTheme.inputDecoration(hint: isReset ? 'SIFIRLA' : 'SIL'),
+                  decoration: AppTheme.inputDecoration(
+                      hint: isReset ? 'SIFIRLA' : 'SIL'),
                   onChanged: (v) => setSt(() => confirmText = v),
                 ),
               ],
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('İptal')),
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('İptal')),
               ElevatedButton(
-                onPressed: confirmText == (isReset ? 'SIFIRLA' : 'SIL') ? () => Navigator.pop(ctx, true) : null,
-                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+                onPressed: confirmText == (isReset ? 'SIFIRLA' : 'SIL')
+                    ? () => Navigator.pop(ctx, true)
+                    : null,
+                style:
+                    ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
                 child: Text(isReset ? 'Sıfırla' : 'Sil'),
               ),
             ],
@@ -155,16 +272,23 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
         } else {
           await AdminApi().deleteAllServices();
         }
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('İşlem tamamlandı'), backgroundColor: AppTheme.success));
+        if (mounted)
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('İşlem tamamlandı'),
+              backgroundColor: AppTheme.success));
       } catch (e) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+        if (mounted)
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
+    if (_loading)
+      return const Center(
+          child: CircularProgressIndicator(color: AppTheme.primary));
 
     return Column(
       children: [
@@ -176,7 +300,9 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
             unselectedLabelColor: AppTheme.textMuted,
             indicatorColor: AppTheme.primary,
             tabs: const [Tab(text: 'Ayarlar'), Tab(text: 'Error Log')],
-            onTap: (i) { if (i == 1 && _errorLog.isEmpty) _loadErrorLog(); },
+            onTap: (i) {
+              if (i == 1 && _errorLog.isEmpty) _loadErrorLog();
+            },
           ),
         ),
         Expanded(
@@ -210,12 +336,14 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
               _buildField('smtp_port', 'Port', Icons.numbers),
               _buildField('smtp_user', 'Kullanıcı', Icons.person),
               _buildField('smtp_pass', 'Şifre', Icons.lock, obscure: true),
-              _buildField('smtp_from', 'Gönderen E-posta', Icons.alternate_email),
+              _buildField(
+                  'smtp_from', 'Gönderen E-posta', Icons.alternate_email),
             ]),
             const SizedBox(height: 12),
 
             // ═══ Fiyatlandırma ═══
-            _buildSubSection('Otomatik Fiyatlandırma', Icons.calculate_rounded, [
+            _buildSubSection(
+                'Otomatik Fiyatlandırma', Icons.calculate_rounded, [
               _buildBoolField('auto_pricing', 'Otomatik fiyatlandırma'),
               _buildField('price_rate', 'Kur (Çarpan)', Icons.currency_lira),
               _buildPricingPreview(),
@@ -242,7 +370,11 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
                 child: const Row(children: [
                   Icon(Icons.info_outline, size: 16, color: AppTheme.warning),
                   SizedBox(width: 8),
-                  Expanded(child: Text('Bakım modu aktifken site ziyaretçilere kapatılır.', style: TextStyle(fontSize: 12, color: AppTheme.warning))),
+                  Expanded(
+                      child: Text(
+                          'Bakım modu aktifken site ziyaretçilere kapatılır.',
+                          style: TextStyle(
+                              fontSize: 12, color: AppTheme.warning))),
                 ]),
               ),
             ]),
@@ -256,13 +388,22 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
               decoration: BoxDecoration(
                 color: AppTheme.error.withValues(alpha: 0.05),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppTheme.error.withValues(alpha: 0.2)),
+                border:
+                    Border.all(color: AppTheme.error.withValues(alpha: 0.2)),
               ),
               child: Column(
                 children: [
-                  _dangerButton('Servisleri Sil', 'Tüm servisleri veritabanından siler', Icons.delete_sweep_rounded, () => _dangerAction('delete')),
+                  _dangerButton(
+                      'Servisleri Sil',
+                      'Tüm servisleri veritabanından siler',
+                      Icons.delete_sweep_rounded,
+                      () => _dangerAction('delete')),
                   const SizedBox(height: 10),
-                  _dangerButton('Tümünü Sıfırla', 'Tüm verileri siler ve sistemi sıfırlar', Icons.restart_alt_rounded, () => _dangerAction('reset')),
+                  _dangerButton(
+                      'Tümünü Sıfırla',
+                      'Tüm verileri siler ve sistemi sıfırlar',
+                      Icons.restart_alt_rounded,
+                      () => _dangerAction('reset')),
                 ],
               ),
             ),
@@ -272,7 +413,9 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
 
         // ═══ Sticky Save Button ═══
         Positioned(
-          left: 0, right: 0, bottom: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
           child: Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -282,12 +425,17 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
             child: ElevatedButton.icon(
               onPressed: _saving ? null : _save,
               icon: _saving
-                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
                   : const Icon(Icons.save_rounded, size: 20),
               label: Text(_saving ? 'Kaydediliyor...' : 'Bilgileri Kaydet'),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
               ),
             ),
           ),
@@ -297,7 +445,8 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
   }
 
   Widget _sectionTitle(String title) {
-    return Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700));
+    return Text(title,
+        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700));
   }
 
   Widget _buildSubSection(String title, IconData icon, List<Widget> children) {
@@ -310,7 +459,9 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
           Row(children: [
             Icon(icon, size: 18, color: AppTheme.primary),
             const SizedBox(width: 8),
-            Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+            Text(title,
+                style:
+                    const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
           ]),
           const SizedBox(height: 16),
           ...children,
@@ -319,25 +470,31 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
     );
   }
 
-  Widget _buildField(String key, String label, IconData icon, {bool obscure = false}) {
+  Widget _buildField(String key, String label, IconData icon,
+      {bool obscure = false}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: TextField(
         controller: TextEditingController(text: '${_settings[key] ?? ''}'),
         obscureText: obscure,
-        decoration: AppTheme.inputDecoration(hint: label, prefixIcon: icon, label: label),
+        decoration: AppTheme.inputDecoration(
+            hint: label, prefixIcon: icon, label: label),
         onChanged: (v) => _settings[key] = v,
       ),
     );
   }
 
   Widget _buildBoolField(String key, String label) {
-    final val = _settings[key] == true || _settings[key] == 1 || _settings[key] == '1';
+    final val =
+        _settings[key] == true || _settings[key] == 1 || _settings[key] == '1';
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       child: Row(
         children: [
-          Expanded(child: Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500))),
+          Expanded(
+              child: Text(label,
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w500))),
           Switch(
             value: val,
             onChanged: (v) => setState(() => _settings[key] = v ? 1 : 0),
@@ -375,20 +532,28 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
       decoration: AppTheme.glassDecoration(radius: 16),
       child: Column(
         children: [
-          _syncButton('Servisleri Çek', Icons.cloud_download_rounded, _syncingServices, () => _runSync('services')),
+          _syncButton('Servisleri Çek', Icons.cloud_download_rounded,
+              _syncingServices, () => _runSync('services')),
           const SizedBox(height: 8),
-          _syncButton('Kategorileri Çek', Icons.category_rounded, _syncingCategories, () => _runSync('categories')),
+          _syncButton('Kategorileri Çek', Icons.category_rounded,
+              _syncingCategories, () => _runSync('categories')),
           const SizedBox(height: 8),
-          _syncButton('Açıklamaları Çek', Icons.description_rounded, _syncingDescriptions, () => _runSync('descriptions')),
+          _syncButton('Açıklamaları Çek', Icons.description_rounded,
+              _syncingDescriptions, () => _runSync('descriptions')),
           const Divider(color: AppTheme.glassBorder, height: 24),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
               onPressed: _syncingAll ? null : () => _runSync('all'),
               icon: _syncingAll
-                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
                   : const Icon(Icons.sync_rounded, size: 20),
-              label: Text(_syncingAll ? 'Senkronize ediliyor...' : 'Tüm Senkron'),
+              label:
+                  Text(_syncingAll ? 'Senkronize ediliyor...' : 'Tüm Senkron'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppTheme.success,
                 padding: const EdgeInsets.symmetric(vertical: 14),
@@ -400,26 +565,32 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
     );
   }
 
-  Widget _syncButton(String label, IconData icon, bool loading, VoidCallback onTap) {
+  Widget _syncButton(
+      String label, IconData icon, bool loading, VoidCallback onTap) {
     return SizedBox(
       width: double.infinity,
       child: OutlinedButton.icon(
         onPressed: loading ? null : onTap,
         icon: loading
-            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2))
             : Icon(icon, size: 18),
         label: Text(label),
         style: OutlinedButton.styleFrom(
           foregroundColor: AppTheme.textSecondary,
           side: BorderSide(color: AppTheme.glassBorder),
           padding: const EdgeInsets.symmetric(vertical: 12),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       ),
     );
   }
 
-  Widget _dangerButton(String title, String subtitle, IconData icon, VoidCallback onTap) {
+  Widget _dangerButton(
+      String title, String subtitle, IconData icon, VoidCallback onTap) {
     return SizedBox(
       width: double.infinity,
       child: OutlinedButton(
@@ -428,7 +599,8 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
           foregroundColor: AppTheme.error,
           side: BorderSide(color: AppTheme.error.withValues(alpha: 0.3)),
           padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
         child: Row(children: [
           Icon(icon, size: 20),
@@ -437,8 +609,13 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                Text(subtitle, style: TextStyle(fontSize: 11, color: AppTheme.error.withValues(alpha: 0.7))),
+                Text(title,
+                    style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w600)),
+                Text(subtitle,
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: AppTheme.error.withValues(alpha: 0.7))),
               ],
             ),
           ),
@@ -449,7 +626,9 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
   }
 
   Widget _buildErrorLog() {
-    if (_logLoading) return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
+    if (_logLoading)
+      return const Center(
+          child: CircularProgressIndicator(color: AppTheme.primary));
     if (_errorLog.isEmpty) {
       return Center(
         child: ElevatedButton.icon(
@@ -465,8 +644,13 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
         Padding(
           padding: const EdgeInsets.all(12),
           child: Row(children: [
-            const Expanded(child: Text('Son 80 satır', style: TextStyle(fontSize: 12, color: AppTheme.textMuted))),
-            IconButton(icon: const Icon(Icons.refresh, size: 20), onPressed: _loadErrorLog, tooltip: 'Yenile'),
+            const Expanded(
+                child: Text('Son 80 satır',
+                    style: TextStyle(fontSize: 12, color: AppTheme.textMuted))),
+            IconButton(
+                icon: const Icon(Icons.refresh, size: 20),
+                onPressed: _loadErrorLog,
+                tooltip: 'Yenile'),
           ]),
         ),
         Expanded(
@@ -476,7 +660,11 @@ class _SettingsTabState extends State<SettingsTab> with SingleTickerProviderStat
             child: SingleChildScrollView(
               child: SelectableText(
                 _errorLog,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 10, color: AppTheme.error, height: 1.5),
+                style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 10,
+                    color: AppTheme.error,
+                    height: 1.5),
               ),
             ),
           ),

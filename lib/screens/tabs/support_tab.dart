@@ -1,55 +1,82 @@
+﻿import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+
 import '../../config/theme.dart';
 import '../../services/admin_api.dart';
 import '../../widgets/status_badge.dart';
 
 class SupportTab extends StatefulWidget {
   const SupportTab({super.key});
+
   @override
   State<SupportTab> createState() => _SupportTabState();
 }
 
 class _SupportTabState extends State<SupportTab> {
   List<dynamic> _items = [];
-  int _page = 1, _pages = 1;
+  int _page = 1;
+  int _pages = 1;
   bool _loading = true;
-  int _viewMode = 0; // 0 = ticket list, 1 = FreeScout WebView
-  late final WebViewController _webCtrl;
+
+  int _viewMode = 0; // 0 = ticket list, 1 = FreeScout
+  WebViewController? _webCtrl;
   bool _webLoading = true;
+
+  bool get _supportsEmbeddedWebView {
+    if (kIsWeb) return false;
+    return defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.macOS;
+  }
 
   @override
   void initState() {
     super.initState();
     _load();
-    _webCtrl = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(NavigationDelegate(
-        onPageStarted: (_) { if (mounted) setState(() => _webLoading = true); },
-        onPageFinished: (_) { if (mounted) setState(() => _webLoading = false); },
-      ))
-      ..loadRequest(Uri.parse('https://destek.buzza.com.tr'));
+
+    if (_supportsEmbeddedWebView) {
+      _webCtrl = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setNavigationDelegate(
+          NavigationDelegate(
+            onPageStarted: (_) {
+              if (mounted) setState(() => _webLoading = true);
+            },
+            onPageFinished: (_) {
+              if (mounted) setState(() => _webLoading = false);
+            },
+          ),
+        )
+        ..loadRequest(Uri.parse('https://destek.buzza.com.tr'));
+    }
   }
 
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
       final d = await AdminApi().getTickets(page: _page);
+      if (!mounted) return;
       setState(() {
         _items = d['items'] as List? ?? [];
         _pages = d['pages'] ?? 1;
         _loading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _loading = false);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$e'), backgroundColor: AppTheme.error),
+      );
     }
   }
 
   void _showTicketChat(Map<String, dynamic> ticket) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => _TicketChatScreen(ticket: ticket, onBack: _load)),
+      MaterialPageRoute(
+        builder: (_) => _TicketChatScreen(ticket: ticket, onBack: _load),
+      ),
     );
   }
 
@@ -57,7 +84,6 @@ class _SupportTabState extends State<SupportTab> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // ─── View Mode Toggle ───
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
           child: Row(
@@ -65,35 +91,48 @@ class _SupportTabState extends State<SupportTab> {
               Expanded(
                 child: SegmentedButton<int>(
                   segments: const [
-                    ButtonSegment(value: 0, label: Text('Ticketlar', style: TextStyle(fontSize: 12)), icon: Icon(Icons.list_alt_rounded, size: 16)),
-                    ButtonSegment(value: 1, label: Text('FreeScout', style: TextStyle(fontSize: 12)), icon: Icon(Icons.support_agent_rounded, size: 16)),
+                    ButtonSegment(
+                      value: 0,
+                      label: Text('Ticketlar', style: TextStyle(fontSize: 12)),
+                      icon: Icon(Icons.list_alt_rounded, size: 16),
+                    ),
+                    ButtonSegment(
+                      value: 1,
+                      label: Text('FreeScout', style: TextStyle(fontSize: 12)),
+                      icon: Icon(Icons.support_agent_rounded, size: 16),
+                    ),
                   ],
                   selected: {_viewMode},
                   onSelectionChanged: (v) => setState(() => _viewMode = v.first),
                   style: ButtonStyle(
                     backgroundColor: WidgetStateProperty.resolveWith((states) {
-                      if (states.contains(WidgetState.selected)) return AppTheme.primary.withOpacity(0.15);
+                      if (states.contains(WidgetState.selected)) {
+                        return AppTheme.primary.withValues(alpha: 0.15);
+                      }
                       return Colors.transparent;
                     }),
                     foregroundColor: WidgetStateProperty.resolveWith((states) {
                       if (states.contains(WidgetState.selected)) return AppTheme.primary;
                       return AppTheme.textMuted;
                     }),
-                    side: WidgetStateProperty.all(BorderSide(color: AppTheme.glassBorder)),
-                    shape: WidgetStateProperty.all(RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                    side: WidgetStateProperty.all(const BorderSide(color: AppTheme.glassBorder)),
+                    shape: WidgetStateProperty.all(
+                      RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
                   ),
                 ),
               ),
               if (_viewMode == 1) ...[
                 const SizedBox(width: 8),
                 Container(
-                  width: 36, height: 36,
+                  width: 36,
+                  height: 36,
                   decoration: BoxDecoration(
-                    color: AppTheme.primary.withOpacity(0.1),
+                    color: AppTheme.primary.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: IconButton(
-                    onPressed: () => _webCtrl.reload(),
+                    onPressed: _supportsEmbeddedWebView ? () => _webCtrl?.reload() : null,
                     icon: const Icon(Icons.refresh_rounded, size: 16, color: AppTheme.primary),
                     padding: EdgeInsets.zero,
                   ),
@@ -102,33 +141,55 @@ class _SupportTabState extends State<SupportTab> {
             ],
           ),
         ),
-
-        // ─── Content ───
-        Expanded(
-          child: _viewMode == 0 ? _buildTicketList() : _buildFreeScoutView(),
-        ),
+        Expanded(child: _viewMode == 0 ? _buildTicketList() : _buildFreeScoutView()),
       ],
     );
   }
 
-  // ─── FreeScout WebView ───
   Widget _buildFreeScoutView() {
+    if (!_supportsEmbeddedWebView || _webCtrl == null) {
+      return _buildWebUnsupported();
+    }
+
     return Column(
       children: [
         if (_webLoading)
-          LinearProgressIndicator(
+          const LinearProgressIndicator(
             backgroundColor: AppTheme.bgCard,
             color: AppTheme.primary,
             minHeight: 2,
           ),
-        Expanded(
-          child: WebViewWidget(controller: _webCtrl),
-        ),
+        Expanded(child: WebViewWidget(controller: _webCtrl!)),
       ],
     );
   }
 
-  // ─── Ticket List ───
+  Widget _buildWebUnsupported() {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: 24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.web_asset_off_rounded, size: 46, color: AppTheme.textMuted),
+            SizedBox(height: 12),
+            Text(
+              'Bu platformda gömülü FreeScout görünümü desteklenmiyor.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppTheme.textMuted),
+            ),
+            SizedBox(height: 6),
+            Text(
+              'Ticketlar sekmesini kullanarak destek taleplerini yönetebilirsiniz.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppTheme.textMuted, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildTicketList() {
     return Column(
       children: [
@@ -149,14 +210,16 @@ class _SupportTabState extends State<SupportTab> {
                   onRefresh: _load,
                   color: AppTheme.primary,
                   child: _items.isEmpty
-                      ? const Center(child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.support_agent_rounded, size: 48, color: AppTheme.textMuted),
-                            SizedBox(height: 12),
-                            Text('Destek talebi yok', style: TextStyle(color: AppTheme.textMuted)),
-                          ],
-                        ))
+                      ? const Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.support_agent_rounded, size: 48, color: AppTheme.textMuted),
+                              SizedBox(height: 12),
+                              Text('Destek talebi yok', style: TextStyle(color: AppTheme.textMuted)),
+                            ],
+                          ),
+                        )
                       : ListView.builder(
                           padding: const EdgeInsets.symmetric(horizontal: 16),
                           itemCount: _items.length + 1,
@@ -171,12 +234,12 @@ class _SupportTabState extends State<SupportTab> {
     );
   }
 
-  Widget _buildTicketCard(dynamic t) {
-    final status = '${t['status'] ?? 'open'}';
-    final source = '${t['source'] ?? ''}';
+  Widget _buildTicketCard(dynamic ticket) {
+    final status = '${ticket['status'] ?? 'open'}';
+    final source = '${ticket['source'] ?? ''}';
 
     return GestureDetector(
-      onTap: () => _showTicketChat(t),
+      onTap: () => _showTicketChat(Map<String, dynamic>.from(ticket as Map)),
       child: Container(
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.all(14),
@@ -184,15 +247,16 @@ class _SupportTabState extends State<SupportTab> {
         child: Row(
           children: [
             Container(
-              width: 40, height: 40,
+              width: 40,
+              height: 40,
               decoration: BoxDecoration(
-                color: _priorityColor(t).withValues(alpha: 0.12),
+                color: _priorityColor(ticket).withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(
                 source == 'app' ? Icons.phone_android_rounded : Icons.language_rounded,
                 size: 20,
-                color: _priorityColor(t),
+                color: _priorityColor(ticket),
               ),
             ),
             const SizedBox(width: 12),
@@ -200,30 +264,38 @@ class _SupportTabState extends State<SupportTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(children: [
-                    Expanded(
-                      child: Text(
-                        '${t['subject'] ?? '-'}',
-                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-                        maxLines: 1, overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    StatusBadge(status: status, fontSize: 9),
-                  ]),
-                  const SizedBox(height: 3),
-                  Row(children: [
-                    Text('${t['user_name'] ?? '-'}', style: const TextStyle(fontSize: 11, color: AppTheme.textMuted)),
-                    const SizedBox(width: 8),
-                    if (source.isNotEmpty)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: AppTheme.primary.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(4),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${ticket['subject'] ?? '-'}',
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        child: Text(source == 'app' ? 'Uygulama' : 'Site', style: const TextStyle(fontSize: 9, color: AppTheme.primary, fontWeight: FontWeight.w600)),
                       ),
-                  ]),
+                      StatusBadge(status: status, fontSize: 9),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      Text('${ticket['user_name'] ?? '-'}', style: const TextStyle(fontSize: 11, color: AppTheme.textMuted)),
+                      const SizedBox(width: 8),
+                      if (source.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: AppTheme.primary.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            source == 'app' ? 'Uygulama' : 'Site',
+                            style: const TextStyle(fontSize: 9, color: AppTheme.primary, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -231,8 +303,8 @@ class _SupportTabState extends State<SupportTab> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Text('#${t['id']}', style: const TextStyle(fontSize: 10, color: AppTheme.textMuted)),
-                Text('${t['created_at'] ?? '-'}', style: const TextStyle(fontSize: 9, color: AppTheme.textMuted)),
+                Text('#${ticket['id']}', style: const TextStyle(fontSize: 10, color: AppTheme.textMuted)),
+                Text('${ticket['created_at'] ?? '-'}', style: const TextStyle(fontSize: 9, color: AppTheme.textMuted)),
               ],
             ),
             const SizedBox(width: 4),
@@ -243,12 +315,15 @@ class _SupportTabState extends State<SupportTab> {
     );
   }
 
-  Color _priorityColor(dynamic t) {
-    switch ('${t['priority'] ?? 'normal'}'.toLowerCase()) {
+  Color _priorityColor(dynamic ticket) {
+    switch ('${ticket['priority'] ?? 'normal'}'.toLowerCase()) {
       case 'high':
-      case 'urgent': return AppTheme.error;
-      case 'low': return AppTheme.textMuted;
-      default: return AppTheme.info;
+      case 'urgent':
+        return AppTheme.error;
+      case 'low':
+        return AppTheme.textMuted;
+      default:
+        return AppTheme.info;
     }
   }
 
@@ -259,20 +334,37 @@ class _SupportTabState extends State<SupportTab> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          IconButton(icon: const Icon(Icons.chevron_left), onPressed: _page > 1 ? () { _page--; _load(); } : null),
+          IconButton(
+            icon: const Icon(Icons.chevron_left),
+            onPressed: _page > 1
+                ? () {
+                    _page--;
+                    _load();
+                  }
+                : null,
+          ),
           Text('$_page / $_pages', style: const TextStyle(color: AppTheme.textMuted)),
-          IconButton(icon: const Icon(Icons.chevron_right), onPressed: _page < _pages ? () { _page++; _load(); } : null),
+          IconButton(
+            icon: const Icon(Icons.chevron_right),
+            onPressed: _page < _pages
+                ? () {
+                    _page++;
+                    _load();
+                  }
+                : null,
+          ),
         ],
       ),
     );
   }
 }
 
-// ═══ Ticket Chat Screen ═══
 class _TicketChatScreen extends StatefulWidget {
   final Map<String, dynamic> ticket;
   final VoidCallback onBack;
+
   const _TicketChatScreen({required this.ticket, required this.onBack});
+
   @override
   State<_TicketChatScreen> createState() => _TicketChatScreenState();
 }
@@ -304,9 +396,11 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
   Future<void> _sendReply() async {
     final text = _replyCtrl.text.trim();
     if (text.isEmpty) return;
+
     setState(() => _sending = true);
     try {
       await AdminApi().replyTicket(widget.ticket['id'], text);
+      if (!mounted) return;
       _replyCtrl.clear();
       setState(() {
         _messages.add({
@@ -318,8 +412,11 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
         _sending = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _sending = false);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$e'), backgroundColor: AppTheme.error),
+      );
     }
   }
 
@@ -329,18 +426,26 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
       backgroundColor: AppTheme.bgDark,
       appBar: AppBar(
         backgroundColor: AppTheme.bgCard,
-        leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () { widget.onBack(); Navigator.pop(context); }),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            widget.onBack();
+            Navigator.pop(context);
+          },
+        ),
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('${widget.ticket['subject'] ?? '-'}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-            Text('${widget.ticket['user_name'] ?? '-'} • #${widget.ticket['id']}', style: const TextStyle(fontSize: 11, color: AppTheme.textMuted)),
+            Text(
+              '${widget.ticket['user_name'] ?? '-'} • #${widget.ticket['id']}',
+              style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
+            ),
           ],
         ),
       ),
       body: Column(
         children: [
-          // ═══ Messages ═══
           Expanded(
             child: ListView.builder(
               padding: const EdgeInsets.all(16),
@@ -348,8 +453,6 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
               itemBuilder: (ctx, i) => _buildBubble(_messages[i]),
             ),
           ),
-
-          // ═══ Quick Reply Templates ═══
           SizedBox(
             height: 36,
             child: ListView(
@@ -364,11 +467,9 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
             ),
           ),
           const SizedBox(height: 8),
-
-          // ═══ Reply Input ═══
           Container(
             padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
-            decoration: BoxDecoration(
+            decoration: const BoxDecoration(
               color: AppTheme.bgCard,
               border: Border(top: BorderSide(color: AppTheme.glassBorder)),
             ),
@@ -392,7 +493,11 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
                     child: IconButton(
                       onPressed: _sending ? null : _sendReply,
                       icon: _sending
-                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
                           : const Icon(Icons.send_rounded, color: Colors.white, size: 20),
                     ),
                   ),
@@ -421,7 +526,9 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
             bottomLeft: isAdmin ? const Radius.circular(14) : const Radius.circular(4),
             bottomRight: isAdmin ? const Radius.circular(4) : const Radius.circular(14),
           ),
-          border: Border.all(color: isAdmin ? AppTheme.primary.withValues(alpha: 0.2) : AppTheme.glassBorder),
+          border: Border.all(
+            color: isAdmin ? AppTheme.primary.withValues(alpha: 0.2) : AppTheme.glassBorder,
+          ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -429,7 +536,14 @@ class _TicketChatScreenState extends State<_TicketChatScreen> {
             if (!isAdmin)
               Padding(
                 padding: const EdgeInsets.only(bottom: 4),
-                child: Text('${msg['name'] ?? '-'}', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: isAdmin ? AppTheme.primary : AppTheme.accentPink)),
+                child: Text(
+                  '${msg['name'] ?? '-'}',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: isAdmin ? AppTheme.primary : AppTheme.accentPink,
+                  ),
+                ),
               ),
             Text('${msg['message'] ?? ''}', style: const TextStyle(fontSize: 13, height: 1.4)),
             const SizedBox(height: 4),

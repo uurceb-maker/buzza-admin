@@ -1,9 +1,11 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../config/theme.dart';
 import '../providers/auth_provider.dart';
 import 'login_screen.dart';
 import 'tabs/dashboard_tab.dart';
+import 'tabs/services_tab.dart';
+import 'tabs/notifications_campaign_tab.dart';
 import 'tabs/settings_tab.dart';
 import 'tabs/categories_tab.dart';
 import 'tabs/orders_tab.dart';
@@ -14,6 +16,7 @@ import 'tabs/security_tab.dart';
 
 class AdminShell extends StatefulWidget {
   const AdminShell({super.key});
+
   @override
   State<AdminShell> createState() => _AdminShellState();
 }
@@ -21,15 +24,18 @@ class AdminShell extends StatefulWidget {
 class _AdminShellState extends State<AdminShell> {
   int _currentIndex = 0;
 
-  // Bottom nav ↔ tab index mapping
+  // Bottom nav -> tab index mapping
   // Bottom: 0=Dashboard, 1=Siparişler, 2=Kullanıcılar, 3=Ödemeler, 4=Destek
-  // Tabs:   0=Dashboard, 1=BuzzaServis, 2=Kategoriler, 3=Siparişler, 4=Kullanıcılar, 5=Ödemeler, 6=Destek, 7=Güvenlik
-  static const _bottomIndexMap = {0: 0, 3: 1, 4: 2, 5: 3, 6: 4}; // tab → bottom
-  static const _bottomToTabMap = {0: 0, 1: 3, 2: 4, 3: 5, 4: 6}; // bottom → tab
+  // Tabs:   0=Dashboard, 1=Servisler, 2=Bildirim/Kampanya, 3=Ayarlar,
+  //         4=Kategoriler, 5=Siparişler, 6=Kullanıcılar, 7=Ödemeler, 8=Destek, 9=Güvenlik
+  static const _bottomIndexMap = {0: 0, 5: 1, 6: 2, 7: 3, 8: 4};
+  static const _bottomToTabMap = {0: 0, 1: 5, 2: 6, 3: 7, 4: 8};
 
   static const _tabs = [
     _TabInfo(icon: Icons.dashboard_rounded, label: 'Dashboard'),
-    _TabInfo(icon: Icons.settings_rounded, label: 'Buzza Servis Ayarları'),
+    _TabInfo(icon: Icons.design_services_rounded, label: 'Servisler'),
+    _TabInfo(icon: Icons.campaign_rounded, label: 'Bildirim ve Kampanyalar'),
+    _TabInfo(icon: Icons.settings_rounded, label: 'Ayarlar'),
     _TabInfo(icon: Icons.category_rounded, label: 'Kategoriler'),
     _TabInfo(icon: Icons.inventory_2_rounded, label: 'Siparişler'),
     _TabInfo(icon: Icons.people_rounded, label: 'Kullanıcılar'),
@@ -40,6 +46,8 @@ class _AdminShellState extends State<AdminShell> {
 
   final _pages = const [
     DashboardTab(),
+    ServicesTab(),
+    NotificationsCampaignTab(),
     SettingsTab(),
     CategoriesTab(),
     OrdersTab(),
@@ -51,7 +59,7 @@ class _AdminShellState extends State<AdminShell> {
 
   void _switchTab(int index) {
     setState(() => _currentIndex = index);
-    Navigator.pop(context); // Close drawer
+    Navigator.pop(context);
   }
 
   Future<void> _logout() async {
@@ -77,13 +85,12 @@ class _AdminShellState extends State<AdminShell> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh_rounded, size: 22),
-            onPressed: () => setState(() {}), // Triggers rebuild = refresh
+            onPressed: () => setState(() {}),
           ),
         ],
       ),
       drawer: _buildDrawer(auth),
       body: IndexedStack(index: _currentIndex, children: _pages),
-      // Bottom nav for quick tabs (first 5)
       bottomNavigationBar: Container(
         decoration: const BoxDecoration(
           color: AppTheme.bgCard,
@@ -110,7 +117,6 @@ class _AdminShellState extends State<AdminShell> {
       child: SafeArea(
         child: Column(
           children: [
-            // Header
             Container(
               padding: const EdgeInsets.all(20),
               decoration: const BoxDecoration(
@@ -119,7 +125,8 @@ class _AdminShellState extends State<AdminShell> {
               child: Row(
                 children: [
                   Container(
-                    width: 48, height: 48,
+                    width: 48,
+                    height: 48,
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(colors: [AppTheme.primary, AppTheme.accentPink]),
                       borderRadius: BorderRadius.circular(14),
@@ -133,21 +140,23 @@ class _AdminShellState extends State<AdminShell> {
                       children: [
                         Text(auth.userName, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
                         const SizedBox(height: 2),
-                        Text(auth.userEmail, style: const TextStyle(fontSize: 11, color: AppTheme.textMuted), overflow: TextOverflow.ellipsis),
+                        Text(
+                          auth.userEmail,
+                          style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ],
                     ),
                   ),
                 ],
               ),
             ),
-
-            // Nav items
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 children: [
                   for (var i = 0; i < _tabs.length; i++) ...[
-                    if (i == 6) const Divider(color: AppTheme.glassBorder, height: 16, indent: 16, endIndent: 16),
+                    if (i == 8) const Divider(color: AppTheme.glassBorder, height: 16, indent: 16, endIndent: 16),
                     _DrawerItem(
                       icon: _tabs[i].icon,
                       label: _tabs[i].label,
@@ -158,8 +167,6 @@ class _AdminShellState extends State<AdminShell> {
                 ],
               ),
             ),
-
-            // Logout
             Container(
               padding: const EdgeInsets.all(16),
               decoration: const BoxDecoration(
@@ -190,6 +197,7 @@ class _AdminShellState extends State<AdminShell> {
 class _TabInfo {
   final IconData icon;
   final String label;
+
   const _TabInfo({required this.icon, required this.label});
 }
 
@@ -199,7 +207,12 @@ class _DrawerItem extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
 
-  const _DrawerItem({required this.icon, required this.label, required this.selected, required this.onTap});
+  const _DrawerItem({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -217,11 +230,14 @@ class _DrawerItem extends StatelessWidget {
               children: [
                 Icon(icon, size: 20, color: selected ? AppTheme.primaryLight : AppTheme.textMuted),
                 const SizedBox(width: 14),
-                Text(label, style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                  color: selected ? AppTheme.primaryLight : AppTheme.textSecondary,
-                )),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                    color: selected ? AppTheme.primaryLight : AppTheme.textSecondary,
+                  ),
+                ),
               ],
             ),
           ),

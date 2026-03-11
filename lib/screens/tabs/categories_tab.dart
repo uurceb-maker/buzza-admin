@@ -13,6 +13,13 @@ class _CategoriesTabState extends State<CategoriesTab> {
   bool _loading = true;
   bool _reorderMode = false;
 
+  bool _isActiveValue(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    final text = '$value'.trim().toLowerCase();
+    return text == '1' || text == 'true' || text == 'yes' || text == 'on' || text == 'active';
+  }
+
   @override
   void initState() { super.initState(); _load(); }
 
@@ -20,7 +27,10 @@ class _CategoriesTabState extends State<CategoriesTab> {
     setState(() => _loading = true);
     try {
       final d = await AdminApi().getCategories();
-      final list = (d['items'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+      final list = (d['items'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
       setState(() { _items = list; _loading = false; });
     } catch (e) {
       setState(() => _loading = false);
@@ -119,9 +129,12 @@ class _CategoriesTabState extends State<CategoriesTab> {
   }
 
   void _toggleActive(Map<String, dynamic> cat) async {
-    final current = cat['active'] == true || cat['active'] == 1 || cat['active'] == '1';
+    final current = _isActiveValue(cat['is_active'] ?? cat['active']);
     try {
-      await AdminApi().updateCategory(cat['id'], {'active': current ? 0 : 1});
+      await AdminApi().updateCategory(cat['id'], {
+        'active': current ? 0 : 1,
+        'is_active': current ? 0 : 1,
+      });
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(current ? 'Kategori gizlendi' : 'Kategori aktif edildi'),
         backgroundColor: AppTheme.success,
@@ -236,7 +249,7 @@ class _CategoriesTabState extends State<CategoriesTab> {
 
   Widget _buildCategoryCard(Map<String, dynamic> cat, int index) {
     final svcCount = int.tryParse('${cat['service_count']}') ?? 0;
-    final isActive = cat['active'] == true || cat['active'] == 1 || cat['active'] == '1';
+    final isActive = _isActiveValue(cat['is_active'] ?? cat['active']);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),

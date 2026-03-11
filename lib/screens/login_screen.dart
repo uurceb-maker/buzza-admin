@@ -68,8 +68,23 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         ),
       );
     } catch (e) {
-      setState(() => _error = e.toString());
+      setState(() => _error = _normalizeErrorMessage(e));
     }
+  }
+
+  String _normalizeErrorMessage(Object error) {
+    final raw = '$error';
+    final cleaned = raw
+        .replaceAll(RegExp(r'<[^>]*>'), ' ')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#039;', "'")
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    return cleaned.isEmpty ? 'Giriş başarısız.' : cleaned;
   }
 
   @override

@@ -21,6 +21,13 @@ class _ServicesTabState extends State<ServicesTab> {
   bool _selectMode = false;
   final Set<int> _selected = {};
 
+  bool _isActive(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    final text = '$value'.trim().toLowerCase();
+    return text == '1' || text == 'true' || text == 'yes' || text == 'on' || text == 'active';
+  }
+
   @override
   void initState() { super.initState(); _load(); }
 
@@ -28,9 +35,17 @@ class _ServicesTabState extends State<ServicesTab> {
     setState(() => _loading = true);
     try {
       final d = await AdminApi().getServices(page: _page, search: _search, category: _category);
+      final items = (d['items'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+      final categories = (d['categories'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
       setState(() {
-        _items = d['items'] as List? ?? [];
-        _categories = d['categories'] as List? ?? [];
+        _items = items;
+        _categories = categories;
         _total = d['total'] ?? 0;
         _pages = d['pages'] ?? 1;
         _loading = false;
@@ -43,7 +58,11 @@ class _ServicesTabState extends State<ServicesTab> {
 
   Future<void> _toggleActive(Map<String, dynamic> svc) async {
     try {
-      await AdminApi().updateService(svc['id'], {'is_active': svc['is_active'] == 1 ? 0 : 1});
+      final currentActive = _isActive(svc['is_active'] ?? svc['active']);
+      await AdminApi().updateService(svc['id'], {
+        'is_active': currentActive ? 0 : 1,
+        'active': currentActive ? 0 : 1,
+      });
       _load();
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
@@ -65,7 +84,10 @@ class _ServicesTabState extends State<ServicesTab> {
   Future<void> _bulkToggle(bool active) async {
     for (final id in _selected) {
       try {
-        await AdminApi().updateService(id, {'is_active': active ? 1 : 0});
+        await AdminApi().updateService(id, {
+          'is_active': active ? 1 : 0,
+          'active': active ? 1 : 0,
+        });
       } catch (_) {}
     }
     _selected.clear();
@@ -253,7 +275,7 @@ class _ServicesTabState extends State<ServicesTab> {
   }
 
   Widget _buildItem(dynamic s) {
-    final active = s['is_active'] == 1;
+    final active = _isActive(s['is_active'] ?? s['active']);
     final isSelected = _selected.contains(s['id']);
 
     return GestureDetector(
