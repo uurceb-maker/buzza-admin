@@ -187,6 +187,7 @@ class _SettingsTabState extends State<SettingsTab>
     final updated = _asNullableInt(summary['updated']);
     final matched = _asNullableInt(summary['matched']);
     final skipped = _asNullableInt(summary['skipped']);
+    final unmatched = _asNullableInt(summary['unmatched']);
     final errors = _asNullableInt(summary['errors']);
     final total = _asNullableInt(summary['total']);
 
@@ -194,6 +195,7 @@ class _SettingsTabState extends State<SettingsTab>
     if (updated != null) parts.add('$updated guncellendi');
     if (matched != null) parts.add('$matched eslesti');
     if (skipped != null) parts.add('$skipped atlandi');
+    if (unmatched != null && unmatched > 0) parts.add('$unmatched eslesmedi');
     if (errors != null && errors > 0) parts.add('$errors hata');
     if (total != null && parts.isEmpty) parts.add('$total kayit islendi');
 

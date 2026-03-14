@@ -528,6 +528,12 @@ class AdminApi {
       'no_change',
       'already_current',
     ]);
+    final unmatched = _readSyncMetric(scopes, [
+      'unmatched',
+      'unmatched_count',
+      'not_matched',
+      'not_found',
+    ]);
     final errors = _readSyncMetric(
         scopes, ['errors', 'error_count', 'failed', 'failed_count']);
     final success = _readSyncSuccess(scopes);
@@ -543,6 +549,7 @@ class AdminApi {
         if (matched != null) 'matched': matched,
         if (updated != null) 'updated': updated,
         if (skipped != null) 'skipped': skipped,
+        if (unmatched != null) 'unmatched': unmatched,
         if (errors != null) 'errors': errors,
         if (success != null) 'success': success,
         if (message.isNotEmpty) 'message': message,
@@ -1058,16 +1065,23 @@ class AdminApi {
   }
 
   Future<Map<String, dynamic>> syncDescriptions() async {
-    final data = await _requestWithTrackedFallback([
-      '/services/sync-descriptions',
-      '/services/sync-description',
-      '/services/descriptions/sync',
-      '/descriptions/sync',
-      '/medyabayim/sync-descriptions',
-      '/medyabayim/sync',
-      '/scraper/sync-descriptions',
-      '/services/sync-all',
-    ], method: 'POST');
+    final data = await _requestWithTrackedFallback(
+        [
+          '/services/sync-descriptions',
+          '/services/sync-description',
+          '/services/descriptions/sync',
+          '/descriptions/sync',
+          '/medyabayim/sync-descriptions',
+          '/medyabayim/sync',
+          '/scraper/sync-descriptions',
+          '/services/sync-all',
+        ],
+        method: 'POST',
+        body: const {
+          'source': 'medyabayim',
+          'fetch_first': true,
+          'dry_run': false,
+        });
     return _normalizeSyncResponse(data, type: 'descriptions');
   }
 
@@ -1181,15 +1195,33 @@ class AdminApi {
   Future<Map<String, dynamic>> resetUserPassword(int id) =>
       _request('/users/$id/reset-password', method: 'POST');
 
-  Future<Map<String, dynamic>> getPayments({int page = 1, String status = ''}) {
+  Future<Map<String, dynamic>> getPayments({
+    int page = 1,
+    String status = '',
+    String search = '',
+    int perPage = 0,
+  }) {
     var query = '?page=$page';
     if (status.isNotEmpty) query += '&status=${Uri.encodeComponent(status)}';
+    if (search.isNotEmpty) query += '&search=${Uri.encodeComponent(search)}';
+    if (perPage > 0) {
+      query += '&per_page=$perPage&limit=$perPage';
+    }
     return _request('/payments$query');
   }
 
-  Future<Map<String, dynamic>> paymentAction(int id, String actionType) =>
-      _request('/payments/$id/action',
-          method: 'POST', body: {'action_type': actionType});
+  Future<Map<String, dynamic>> paymentAction(
+    int id,
+    String actionType, {
+    String reason = '',
+  }) {
+    final body = <String, dynamic>{'action_type': actionType};
+    if (reason.trim().isNotEmpty) {
+      body['reason'] = reason.trim();
+      body['note'] = reason.trim();
+    }
+    return _request('/payments/$id/action', method: 'POST', body: body);
+  }
 
   Future<Map<String, dynamic>> getTickets({int page = 1}) =>
       _request('/tickets?page=$page');
