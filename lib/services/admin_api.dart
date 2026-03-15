@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -18,16 +19,34 @@ class AdminApi {
   String get baseUrl => _baseUrl;
   bool get hasToken => _token.isNotEmpty;
 
+  String _normalizeRootUrl(String url) {
+    var clean = url.trim();
+    clean = clean.replaceAll(RegExp(r'/wp-admin.*$', caseSensitive: false), '');
+    clean = clean.replaceAll(RegExp(r'/wp-json.*$', caseSensitive: false), '');
+    clean = clean.replaceAll(RegExp(r'/+$'), '');
+    return clean;
+  }
+
+  String _detectNamespaceFromRawUrl(String rawUrl) {
+    final lower = rawUrl.toLowerCase();
+    if (lower.contains('/wp-json/buzza/admin/v1')) return 'buzza/admin/v1';
+    if (lower.contains('/wp-json/buzza-admin/v1')) return 'buzza-admin/v1';
+    if (lower.contains('/wp-json/buzza-security/v1')) return 'buzza-security/v1';
+    if (lower.contains('/wp-json/buzza/v1')) return 'buzza/v1';
+    return '';
+  }
+
   void setToken(String token) {
     _token = token;
   }
 
   void setBaseUrl(String url) {
-    var clean = url.trim();
-    clean = clean.replaceAll(RegExp(r'/wp-admin.*$', caseSensitive: false), '');
-    clean = clean.replaceAll(RegExp(r'/wp-json.*$', caseSensitive: false), '');
-    clean = clean.replaceAll(RegExp(r'/+$'), '');
-    _baseUrl = '$clean/wp-json/buzza-admin/v1';
+    final cleanRoot = _normalizeRootUrl(url);
+    final detectedNamespace = _detectNamespaceFromRawUrl(url);
+    final namespace = detectedNamespace.isNotEmpty
+        ? detectedNamespace
+        : 'buzza-admin/v1';
+    _baseUrl = '$cleanRoot/wp-json/$namespace';
   }
 
   void clearSession() {
@@ -132,18 +151,30 @@ class AdminApi {
     for (final uri
         in _buildCandidateUris(endpoint, bustCache: method == 'GET')) {
       late http.Response response;
-      switch (method) {
-        case 'POST':
-          response = await http
-              .post(uri,
-                  headers: _jsonHeaders(),
-                  body: body != null ? json.encode(body) : null)
-              .timeout(const Duration(seconds: 20));
-          break;
-        default:
-          response = await http
-              .get(uri, headers: _jsonHeaders())
-              .timeout(const Duration(seconds: 20));
+      try {
+        switch (method) {
+          case 'POST':
+            response = await http
+                .post(uri,
+                    headers: _jsonHeaders(),
+                    body: body != null ? json.encode(body) : null)
+                .timeout(const Duration(seconds: 20));
+            break;
+          default:
+            response = await http
+                .get(uri, headers: _jsonHeaders())
+                .timeout(const Duration(seconds: 20));
+        }
+      } on TimeoutException {
+        lastError = ApiException(
+            'Sunucu yanit vermiyor (20 sn zaman asimi). Lutfen tekrar deneyin.');
+        continue;
+      } on http.ClientException catch (error) {
+        lastError = ApiException('Baglanti hatasi: ${error.message}');
+        continue;
+      } catch (error) {
+        lastError = ApiException('Baglanti hatasi: $error');
+        continue;
       }
 
       final respBody = utf8.decode(response.bodyBytes).trim();
@@ -177,12 +208,17 @@ class AdminApi {
       }
 
       if (response.statusCode == 401) {
-        throw AuthExpiredException('Oturum süresi doldu');
+        throw AuthExpiredException('Oturum suresi doldu');
       }
 
       if (response.statusCode >= 400) {
         if (decoded is Map<String, dynamic>) {
-          throw ApiException(_extractErrorMessage(decoded));
+          final extracted = _extractErrorMessage(decoded);
+          if (response.statusCode == 403 &&
+              _looksLikeAuthFailure(extracted.toLowerCase())) {
+            throw AuthExpiredException('Oturum suresi doldu');
+          }
+          throw ApiException(extracted);
         }
         throw ApiException('HTTP ${response.statusCode}');
       }
@@ -271,6 +307,16 @@ class AdminApi {
             valueLower.contains('document.createelement'));
   }
 
+  bool _looksLikeRestAuthGate(String valueLower) {
+    final hasRest = valueLower.contains('rest api') ||
+        valueLower.contains('rest_forbidden') ||
+        valueLower.contains('yetkilendirme');
+    final hasToken = valueLower.contains('jwt token') ||
+        valueLower.contains('authorization token') ||
+        valueLower.contains('token');
+    return hasRest && hasToken;
+  }
+
   String _normalizeErrorText(String raw) {
     final cleaned = _decodeHtmlEntities(_stripHtml(raw)).trim();
     if (cleaned.isEmpty) {
@@ -282,6 +328,9 @@ class AdminApi {
     }
     if (_looksLikeWpCriticalError(lower)) {
       return 'WordPress tarafında kritik bir hata oluştu. Lütfen site yöneticiniz eklenti ve PHP hata kayıtlarını kontrol etsin.';
+    }
+    if (_looksLikeRestAuthGate(lower)) {
+      return 'REST API giris istegini engelledi. Uygulama alternatif giris yolunu deniyor; sorun devam ederse login endpointi beyaz listeye alinmalidir.';
     }
     return cleaned;
   }
@@ -328,6 +377,8 @@ class AdminApi {
   bool _isRetryableLoginError(ApiException error) {
     final message = error.message.toLowerCase();
     return _isMissingRoute(error) ||
+        message.contains('rest_forbidden') ||
+        _looksLikeRestAuthGate(message) ||
         message.contains('kritik bir hata') ||
         message.contains('critical error') ||
         message.contains('api bulunamadı') ||
@@ -338,6 +389,18 @@ class AdminApi {
         message.contains('gecersiz yanit') ||
         message.contains('endpointi bulunamadı') ||
         message.contains('endpointi bulunamadi');
+  }
+
+  bool _looksLikeAuthFailure(String messageLower) {
+    return messageLower.contains('rest_forbidden') ||
+        messageLower.contains('unauthorized') ||
+        messageLower.contains('authorization') ||
+        messageLower.contains('jwt') ||
+        messageLower.contains('invalid token') ||
+        messageLower.contains('gecersiz token') ||
+        messageLower.contains('oturum') ||
+        messageLower.contains('session') ||
+        messageLower.contains('token');
   }
 
   String _siteBaseUrl() {
@@ -701,21 +764,40 @@ class AdminApi {
                 'Giriş başarılı görünüyor ancak oturum anahtarı alınamadı.');
           }
           _token = token;
-          return data;
+          final resolvedNamespace = _detectNamespaceFromRawUrl(uri.toString());
+          return <String, dynamic>{
+            ...data,
+            '_resolved_login_uri': uri.toString(),
+            if (resolvedNamespace.isNotEmpty)
+              '_resolved_namespace': resolvedNamespace,
+          };
         }
 
         if (data is String || data is num) {
           final tokenFromBody = '$data'.trim();
           if (tokenFromBody.isNotEmpty) {
             _token = tokenFromBody;
-            return <String, dynamic>{'token': tokenFromBody};
+            final resolvedNamespace = _detectNamespaceFromRawUrl(uri.toString());
+            return <String, dynamic>{
+              'token': tokenFromBody,
+              '_resolved_login_uri': uri.toString(),
+              if (resolvedNamespace.isNotEmpty)
+                '_resolved_namespace': resolvedNamespace,
+            };
           }
         }
 
         throw ApiException('Sunucu geçersiz yanıt döndürdü');
+      } on TimeoutException {
+        lastError = ApiException(
+            'Sunucu yanit vermiyor (20 sn zaman asimi). Lutfen tekrar deneyin.');
+      } on http.ClientException catch (error) {
+        lastError = ApiException('Baglanti hatasi: ${error.message}');
       } on ApiException catch (error) {
         lastError = error;
         if (!_isRetryableLoginError(error)) rethrow;
+      } catch (error) {
+        lastError = ApiException('Baglanti hatasi: $error');
       }
     }
 
@@ -741,6 +823,130 @@ class AdminApi {
       }
     }
     throw lastError ?? ApiException('Giriş başarısız');
+  }
+
+  bool _isExplicitlyInvalidVerification(Map<String, dynamic> data) {
+    final nested = _asMap(data['data']);
+    final values = <dynamic>[
+      data['valid'],
+      data['ok'],
+      data['success'],
+      data['authorized'],
+      nested['valid'],
+      nested['ok'],
+      nested['success'],
+      nested['authorized'],
+    ];
+
+    var hasExplicit = false;
+    var hasTrue = false;
+    for (final value in values) {
+      final parsed = _asNullableBool(value);
+      if (parsed == null) continue;
+      hasExplicit = true;
+      if (parsed) hasTrue = true;
+    }
+
+    if (hasExplicit) {
+      return !hasTrue;
+    }
+    return false;
+  }
+
+  Future<Map<String, dynamic>?> _verifyTokenAfterLogin() async {
+    if (_token.isEmpty) {
+      throw ApiException(
+          'Giris basarili gorunuyor ancak oturum anahtari alinamadi.');
+    }
+
+    ApiException? lastRouteError;
+    for (final endpoint in const [
+      '/auth/verify',
+      '/verify',
+      '/token/verify',
+      '/auth/check',
+    ]) {
+      try {
+        final data = await _request(endpoint);
+        if (_isExplicitlyInvalidVerification(data)) {
+          throw ApiException('Sunucu bu oturumu dogrulamadi.');
+        }
+        return data;
+      } on AuthExpiredException {
+        throw ApiException('Sunucu bu oturumu dogrulamadi.');
+      } on ApiException catch (error) {
+        final lower = error.message.toLowerCase();
+        if (_isMissingRoute(error)) {
+          lastRouteError = error;
+          continue;
+        }
+        if (_looksLikeAuthFailure(lower)) {
+          throw ApiException('Sunucu bu oturum anahtarini kabul etmedi.');
+        }
+        return null;
+      }
+    }
+
+    if (lastRouteError != null) {
+      return null;
+    }
+    return null;
+  }
+
+  Map<String, dynamic> _mergeLoginWithVerification(
+    Map<String, dynamic> loginResult,
+    Map<String, dynamic> verification,
+  ) {
+    final merged = Map<String, dynamic>.from(loginResult);
+    final verifyData = _asMap(verification['data']);
+    final verifyUser = _asMap(verification['user']);
+    final verifyNestedUser = _asMap(verifyData['user']);
+    final resolvedUser = verifyUser.isNotEmpty ? verifyUser : verifyNestedUser;
+
+    if (resolvedUser.isNotEmpty) {
+      if (_asMap(merged['user']).isEmpty) {
+        merged['user'] = resolvedUser;
+      }
+      final mergedData = _asMap(merged['data']);
+      if (mergedData.isNotEmpty && _asMap(mergedData['user']).isEmpty) {
+        merged['data'] = <String, dynamic>{...mergedData, 'user': resolvedUser};
+      }
+    }
+
+    return merged;
+  }
+
+  void _applyResolvedLoginBase(Map<String, dynamic> loginResult) {
+    final namespace =
+        '${loginResult['_resolved_namespace'] ?? loginResult['resolved_namespace'] ?? ''}'
+            .trim();
+    if (namespace.isEmpty) {
+      return;
+    }
+
+    if (namespace != 'buzza-admin/v1' && namespace != 'buzza/admin/v1') {
+      return;
+    }
+
+    final root = _siteRootUrl();
+    _baseUrl = '$root/wp-json/$namespace';
+  }
+
+  Future<Map<String, dynamic>> _loginAndValidateSession(
+    Future<Map<String, dynamic>> Function() loginAttempt,
+  ) async {
+    final result = await loginAttempt();
+    _applyResolvedLoginBase(result);
+    try {
+      final verification = await _verifyTokenAfterLogin();
+      if (verification == null) {
+        return result;
+      }
+      return _mergeLoginWithVerification(result, verification);
+    } on ApiException {
+      _token = '';
+      rethrow;
+    }
   }
 
   Future<Map<String, dynamic>> _loginWithAbsolutePath(
@@ -844,7 +1050,9 @@ class AdminApi {
       '/token'
     ]) {
       try {
-        return await _loginWithEndpoint(endpoint, username, password);
+        return await _loginAndValidateSession(
+          () => _loginWithEndpoint(endpoint, username, password),
+        );
       } on ApiException catch (error) {
         lastError = error;
         if (_isRetryableLoginError(error)) {
@@ -865,7 +1073,9 @@ class AdminApi {
       '/wp-json/simple-jwt-login/v1/auth',
     ]) {
       try {
-        return await _loginWithAbsolutePath(path, username, password);
+        return await _loginAndValidateSession(
+          () => _loginWithAbsolutePath(path, username, password),
+        );
       } on ApiException catch (error) {
         lastError = error;
         if (_isRetryableLoginError(error)) {
@@ -876,9 +1086,11 @@ class AdminApi {
     }
 
     try {
-      return await _loginViaAdminAjax(username, password);
+      return await _loginAndValidateSession(
+        () => _loginViaAdminAjax(username, password),
+      );
     } on ApiException catch (ajaxError) {
-      throw ajaxError;
+      throw lastError ?? ajaxError;
     }
   }
 
