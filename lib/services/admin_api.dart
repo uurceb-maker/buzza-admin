@@ -7,6 +7,7 @@ import '../config/constants.dart';
 
 class AdminApi {
   static final AdminApi _instance = AdminApi._internal();
+  static const Duration _requestTimeout = Duration(seconds: 45);
 
   factory AdminApi() => _instance;
 
@@ -31,7 +32,8 @@ class AdminApi {
     final lower = rawUrl.toLowerCase();
     if (lower.contains('/wp-json/buzza/admin/v1')) return 'buzza/admin/v1';
     if (lower.contains('/wp-json/buzza-admin/v1')) return 'buzza-admin/v1';
-    if (lower.contains('/wp-json/buzza-security/v1')) return 'buzza-security/v1';
+    if (lower.contains('/wp-json/buzza-security/v1'))
+      return 'buzza-security/v1';
     if (lower.contains('/wp-json/buzza/v1')) return 'buzza/v1';
     return '';
   }
@@ -43,9 +45,8 @@ class AdminApi {
   void setBaseUrl(String url) {
     final cleanRoot = _normalizeRootUrl(url);
     final detectedNamespace = _detectNamespaceFromRawUrl(url);
-    final namespace = detectedNamespace.isNotEmpty
-        ? detectedNamespace
-        : 'buzza-admin/v1';
+    final namespace =
+        detectedNamespace.isNotEmpty ? detectedNamespace : 'buzza-admin/v1';
     _baseUrl = '$cleanRoot/wp-json/$namespace';
   }
 
@@ -158,16 +159,16 @@ class AdminApi {
                 .post(uri,
                     headers: _jsonHeaders(),
                     body: body != null ? json.encode(body) : null)
-                .timeout(const Duration(seconds: 20));
+                .timeout(_requestTimeout);
             break;
           default:
             response = await http
                 .get(uri, headers: _jsonHeaders())
-                .timeout(const Duration(seconds: 20));
+                .timeout(_requestTimeout);
         }
       } on TimeoutException {
         lastError = ApiException(
-            'Sunucu yanit vermiyor (20 sn zaman asimi). Lutfen tekrar deneyin.');
+            'Sunucu yanit vermiyor (45 sn zaman asimi). Lutfen tekrar deneyin.');
         continue;
       } on http.ClientException catch (error) {
         lastError = ApiException('Baglanti hatasi: ${error.message}');
@@ -179,7 +180,7 @@ class AdminApi {
 
       final respBody = utf8.decode(response.bodyBytes).trim();
       if (respBody.isEmpty) {
-        lastError = ApiException('Sunucudan yanıt alınamadı.');
+        lastError = ApiException('Sunucudan yanit alinamadi.');
         continue;
       }
       if (respBody.startsWith('<')) {
@@ -215,7 +216,7 @@ class AdminApi {
         if (decoded is Map<String, dynamic>) {
           final extracted = _extractErrorMessage(decoded);
           if (response.statusCode == 403 &&
-              _looksLikeAuthFailure(extracted.toLowerCase())) {
+              _looksLikeExpiredSession(extracted)) {
             throw AuthExpiredException('Oturum suresi doldu');
           }
           throw ApiException(extracted);
@@ -227,7 +228,7 @@ class AdminApi {
       return {'data': decoded};
     }
 
-    throw lastError ?? ApiException('Sunucudan yanıt alınamadı.');
+    throw lastError ?? ApiException('Sunucudan yanit alinamadi.');
   }
 
   Future<Map<String, dynamic>> _requestWithFallback(
@@ -248,7 +249,7 @@ class AdminApi {
       }
     }
     throw lastRouteError ??
-        ApiException('Talep edilen endpoint sunucuda bulunamadı.');
+        ApiException('Talep edilen endpoint sunucuda bulunamadi.');
   }
 
   Future<Map<String, dynamic>> _requestWithTrackedFallback(
@@ -290,44 +291,66 @@ class AdminApi {
         .replaceAll('&nbsp;', ' ');
   }
 
+  String _normalizeMatchText(String input) {
+    return input
+        .toLowerCase()
+        .replaceAll('\u0131', 'i')
+        .replaceAll('\u0130', 'i')
+        .replaceAll('\u015f', 's')
+        .replaceAll('\u015e', 's')
+        .replaceAll('\u011f', 'g')
+        .replaceAll('\u011e', 'g')
+        .replaceAll('\u00fc', 'u')
+        .replaceAll('\u00dc', 'u')
+        .replaceAll('\u00f6', 'o')
+        .replaceAll('\u00d6', 'o')
+        .replaceAll('\u00e7', 'c')
+        .replaceAll('\u00c7', 'c')
+        .replaceAll(RegExp(r'[^a-z0-9/_\s-]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
   bool _looksLikeWpCriticalError(String valueLower) {
-    return valueLower.contains('sitenizde ciddi bir sorun') ||
-        valueLower.contains('there has been a critical error') ||
-        valueLower.contains('wordpress sorunlarını gidermek') ||
-        valueLower.contains('wordpress sorunlarini gidermek') ||
-        valueLower.contains('troubleshooting');
+    final text = _normalizeMatchText(valueLower);
+    return text.contains('sitenizde ciddi bir sorun') ||
+        text.contains('there has been a critical error') ||
+        text.contains('wordpress sorunlarini gidermek') ||
+        text.contains('troubleshooting');
   }
 
   bool _looksLikeCloudflareBlock(String valueLower) {
-    return valueLower.contains('cdn-cgi/challenge-platform') ||
-        valueLower.contains('cloudflare') ||
-        valueLower.contains('attention required') ||
-        valueLower.contains('cf-browser-verification') ||
-        (valueLower.contains('401 unauthorized') &&
-            valueLower.contains('document.createelement'));
+    final text = _normalizeMatchText(valueLower);
+    return text.contains('cdn-cgi/challenge-platform') ||
+        text.contains('cloudflare') ||
+        text.contains('attention required') ||
+        text.contains('cf-browser-verification') ||
+        (text.contains('401 unauthorized') &&
+            text.contains('document.createelement'));
   }
 
   bool _looksLikeRestAuthGate(String valueLower) {
-    final hasRest = valueLower.contains('rest api') ||
-        valueLower.contains('rest_forbidden') ||
-        valueLower.contains('yetkilendirme');
-    final hasToken = valueLower.contains('jwt token') ||
-        valueLower.contains('authorization token') ||
-        valueLower.contains('token');
+    final text = _normalizeMatchText(valueLower);
+    final hasRest = text.contains('rest api') ||
+        text.contains('rest_forbidden') ||
+        text.contains('yetkilendirme');
+    final hasToken = text.contains('jwt token') ||
+        text.contains('authorization token') ||
+        text.contains('token');
     return hasRest && hasToken;
   }
 
   String _normalizeErrorText(String raw) {
     final cleaned = _decodeHtmlEntities(_stripHtml(raw)).trim();
     if (cleaned.isEmpty) {
-      return 'Beklenmeyen sunucu hatası oluştu.';
+      return 'Beklenmeyen sunucu hatasi olustu.';
     }
     final lower = cleaned.toLowerCase();
     if (_looksLikeCloudflareBlock(lower)) {
-      return 'Site güvenlik duvarı isteği engelledi. Cloudflare veya WAF ayarlarında /wp-json ve /wp-admin/admin-ajax.php yollarına izin verilmelidir.';
+      return 'Site guvenlik duvari istegi engelledi. Cloudflare veya WAF ayarlarinda /wp-json ve /wp-admin/admin-ajax.php yollarina izin verilmelidir.';
     }
     if (_looksLikeWpCriticalError(lower)) {
-      return 'WordPress tarafında kritik bir hata oluştu. Lütfen site yöneticiniz eklenti ve PHP hata kayıtlarını kontrol etsin.';
+      return 'WordPress tarafinda kritik bir hata olustu. Lutfen eklenti ve PHP hata kayitlarini kontrol edin.';
     }
     if (_looksLikeRestAuthGate(lower)) {
       return 'REST API giris istegini engelledi. Uygulama alternatif giris yolunu deniyor; sorun devam ederse login endpointi beyaz listeye alinmalidir.';
@@ -341,66 +364,62 @@ class AdminApi {
         '${data['error'] ?? data['message'] ?? nested['error'] ?? nested['message'] ?? data['code'] ?? nested['code'] ?? ''}'
             .trim();
     if (raw.isNotEmpty) return _normalizeErrorText(raw);
-    return 'Bilinmeyen API hatası';
+    return 'Bilinmeyen API hatasi';
+  }
+
+  bool _looksLikeRouteMessage(String message) {
+    final text = _normalizeMatchText(message);
+    return text.contains('rest_no_route') ||
+        text.contains('rest_invalid_handler') ||
+        text.contains('no route') ||
+        text.contains('route handler') ||
+        text.contains('eslesen yol bulunamadi') ||
+        text.contains('istek yontemi ve baglantiyla eslesen yol bulunamadi') ||
+        text.contains('yol isleyicisi gecersiz') ||
+        text.contains('undefined method') ||
+        text.contains('not found') ||
+        text.contains('endpoint bulunamadi');
   }
 
   bool _looksLikeRouteError(Map<String, dynamic> data) {
     final nested = _asMap(data['data']);
-    final code = '${data['code'] ?? nested['code'] ?? ''}'.toLowerCase();
-    final message = _extractErrorMessage(data).toLowerCase();
-    return code.contains('rest_no_route') ||
-        code.contains('rest_invalid_handler') ||
-        message.contains('no route') ||
-        message.contains('route handler') ||
-        message.contains('eşleşen yol bulunamadı') ||
-        message.contains('eslesen yol bulunamadi') ||
-        message.contains('yol işleyicisi geçersiz') ||
-        message.contains('yol isleyicisi gecersiz') ||
-        message.contains('undefined method') ||
-        message.contains('not found');
+    final code = _normalizeMatchText('${data['code'] ?? nested['code'] ?? ''}');
+    if (code.contains('rest_no_route') ||
+        code.contains('rest_invalid_handler')) {
+      return true;
+    }
+    final message = _extractErrorMessage(data);
+    return _looksLikeRouteMessage(message);
   }
 
   bool _isMissingRoute(ApiException error) {
-    final message = error.message.toLowerCase();
-    return message.contains('no route') ||
-        message.contains('rest_no_route') ||
-        message.contains('rest_invalid_handler') ||
-        message.contains('yol işleyicisi geçersiz') ||
-        message.contains('yol isleyicisi gecersiz') ||
-        message.contains('route handler') ||
-        message.contains('eşleşen yol bulunamadı') ||
-        message.contains('eslesen yol bulunamadi') ||
-        message.contains('undefined method') ||
-        message.contains('not found');
+    return _looksLikeRouteMessage(error.message);
   }
 
   bool _isRetryableLoginError(ApiException error) {
-    final message = error.message.toLowerCase();
+    final message = _normalizeMatchText(error.message);
     return _isMissingRoute(error) ||
         message.contains('rest_forbidden') ||
-        _looksLikeRestAuthGate(message) ||
+        _looksLikeRestAuthGate(error.message) ||
         message.contains('kritik bir hata') ||
         message.contains('critical error') ||
-        message.contains('api bulunamadı') ||
         message.contains('api bulunamadi') ||
-        message.contains('json değil') ||
         message.contains('json degil') ||
-        message.contains('geçersiz yanıt') ||
         message.contains('gecersiz yanit') ||
-        message.contains('endpointi bulunamadı') ||
         message.contains('endpointi bulunamadi');
   }
 
-  bool _looksLikeAuthFailure(String messageLower) {
-    return messageLower.contains('rest_forbidden') ||
-        messageLower.contains('unauthorized') ||
-        messageLower.contains('authorization') ||
-        messageLower.contains('jwt') ||
-        messageLower.contains('invalid token') ||
-        messageLower.contains('gecersiz token') ||
-        messageLower.contains('oturum') ||
-        messageLower.contains('session') ||
-        messageLower.contains('token');
+  bool _looksLikeExpiredSession(String message) {
+    final text = _normalizeMatchText(message);
+    return text.contains('invalid token') ||
+        text.contains('gecersiz token') ||
+        text.contains('token expired') ||
+        text.contains('jwt expired') ||
+        text.contains('session expired') ||
+        text.contains('oturum suresi doldu') ||
+        text.contains('rest_not_logged_in') ||
+        text.contains('gecersiz nonce') ||
+        text.contains('nonce is invalid');
   }
 
   String _siteBaseUrl() {
@@ -471,6 +490,12 @@ class AdminApi {
     if (value is int) return value;
     if (value is double) return value.round();
     return int.tryParse('$value') ?? fallback;
+  }
+
+  double _asDouble(dynamic value, {double fallback = 0}) {
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    return double.tryParse('$value') ?? fallback;
   }
 
   bool _asBool(dynamic value) {
@@ -726,11 +751,11 @@ class AdminApi {
         final body = attempt['body'];
         final response = await http
             .post(uri, headers: headers, body: body)
-            .timeout(const Duration(seconds: 20));
+            .timeout(_requestTimeout);
 
         final respBody = utf8.decode(response.bodyBytes).trim();
         if (respBody.isEmpty) {
-          throw ApiException('Sunucudan yanıt alınamadı.');
+          throw ApiException('Sunucudan yanit alinamadi.');
         }
         if (respBody.startsWith('<')) {
           throw ApiException(_normalizeErrorText(respBody));
@@ -751,7 +776,7 @@ class AdminApi {
           if (data is Map<String, dynamic>) {
             throw ApiException(_extractErrorMessage(data));
           }
-          throw ApiException('Giriş başarısız');
+          throw ApiException('Giris basarisiz');
         }
 
         if (data is Map<String, dynamic>) {
@@ -761,7 +786,7 @@ class AdminApi {
           }
           if (token.isEmpty) {
             throw ApiException(
-                'Giriş başarılı görünüyor ancak oturum anahtarı alınamadı.');
+                'Giris basarili gorunuyor ancak oturum anahtari alinamadi.');
           }
           _token = token;
           final resolvedNamespace = _detectNamespaceFromRawUrl(uri.toString());
@@ -777,7 +802,8 @@ class AdminApi {
           final tokenFromBody = '$data'.trim();
           if (tokenFromBody.isNotEmpty) {
             _token = tokenFromBody;
-            final resolvedNamespace = _detectNamespaceFromRawUrl(uri.toString());
+            final resolvedNamespace =
+                _detectNamespaceFromRawUrl(uri.toString());
             return <String, dynamic>{
               'token': tokenFromBody,
               '_resolved_login_uri': uri.toString(),
@@ -787,10 +813,10 @@ class AdminApi {
           }
         }
 
-        throw ApiException('Sunucu geçersiz yanıt döndürdü');
+        throw ApiException('Sunucu gecersiz yanit dondurdu');
       } on TimeoutException {
         lastError = ApiException(
-            'Sunucu yanit vermiyor (20 sn zaman asimi). Lutfen tekrar deneyin.');
+            'Sunucu yanit vermiyor (45 sn zaman asimi). Lutfen tekrar deneyin.');
       } on http.ClientException catch (error) {
         lastError = ApiException('Baglanti hatasi: ${error.message}');
       } on ApiException catch (error) {
@@ -801,7 +827,7 @@ class AdminApi {
       }
     }
 
-    throw lastError ?? ApiException('Giriş başarısız');
+    throw lastError ?? ApiException('Giris basarisiz');
   }
 
   Future<Map<String, dynamic>> _loginWithEndpoint(
@@ -822,7 +848,7 @@ class AdminApi {
         rethrow;
       }
     }
-    throw lastError ?? ApiException('Giriş başarısız');
+    throw lastError ?? ApiException('Giris basarisiz');
   }
 
   bool _isExplicitlyInvalidVerification(Map<String, dynamic> data) {
@@ -880,7 +906,10 @@ class AdminApi {
           lastRouteError = error;
           continue;
         }
-        if (_looksLikeAuthFailure(lower)) {
+        if (_looksLikeRestAuthGate(lower) || _looksLikeCloudflareBlock(lower)) {
+          return null;
+        }
+        if (_looksLikeExpiredSession(lower)) {
           throw ApiException('Sunucu bu oturum anahtarini kabul etmedi.');
         }
         return null;
@@ -984,11 +1013,11 @@ class AdminApi {
             'password': password,
             'pass': password,
           },
-        ).timeout(const Duration(seconds: 20));
+        ).timeout(_requestTimeout);
 
         final respBody = utf8.decode(response.bodyBytes).trim();
         if (respBody.isEmpty) {
-          lastError = ApiException('Sunucudan yanıt alınamadı.');
+          lastError = ApiException('Sunucudan yanit alinamadi.');
           continue;
         }
         if (respBody.startsWith('<')) {
@@ -1020,7 +1049,7 @@ class AdminApi {
         }
         if (token.isEmpty) {
           lastError = ApiException(
-              'Giriş başarılı görünüyor ancak oturum anahtarı alınamadı.');
+              'Giris basarili gorunuyor ancak oturum anahtari alinamadi.');
           continue;
         }
 
@@ -1029,13 +1058,13 @@ class AdminApi {
       } on ApiException catch (error) {
         lastError = error;
       } catch (error) {
-        lastError = ApiException('Bağlantı hatası: $error');
+        lastError = ApiException('Baglanti hatasi: $error');
       }
     }
 
     throw lastError ??
         ApiException(
-          'Giriş endpointi bulunamadı. Eklentinin aktif olduğundan ve URL\'nin doğru olduğundan emin olun.',
+          'Giris endpointi bulunamadi. Eklentinin aktif oldugundan ve URL\'nin dogru oldugundan emin olun.',
         );
   }
 
@@ -1374,10 +1403,42 @@ class AdminApi {
   Future<Map<String, dynamic>> cancelOrder(int id) =>
       _request('/orders/$id/cancel', method: 'POST');
 
-  Future<Map<String, dynamic>> getUsers({int page = 1, String search = ''}) {
+  Future<Map<String, dynamic>> getUsers(
+      {int page = 1, String search = ''}) async {
     var query = '?page=$page';
     if (search.isNotEmpty) query += '&search=${Uri.encodeComponent(search)}';
-    return _request('/users$query');
+    final data = await _requestWithFallback([
+      '/users$query',
+      '/users/list$query',
+      '/customers$query',
+      '/members$query',
+    ]);
+    final payload = _asMap(data['data']);
+    final rawItems =
+        data['items'] ?? data['users'] ?? payload['items'] ?? payload['users'];
+
+    final items = _asList(rawItems).map((item) {
+      final map = _asMap(item);
+      map['id'] = _asInt(map['id']);
+      map['display_name'] =
+          _pickString(map, ['display_name', 'name', 'full_name', 'username']);
+      map['email'] = _pickString(map, ['email', 'user_email']);
+      map['balance'] = map['balance'] ?? map['wallet_balance'] ?? 0;
+      map['registered'] =
+          _pickString(map, ['registered', 'created_at', 'date']);
+      return map;
+    }).toList();
+
+    return {
+      ...data,
+      'items': items,
+      'total': _asInt(data['total'],
+          fallback: _asInt(payload['total'], fallback: items.length)),
+      'pages': _asInt(data['pages'],
+          fallback: _asInt(payload['pages'], fallback: 1)),
+      'page': _asInt(data['page'],
+          fallback: _asInt(payload['page'], fallback: page)),
+    };
   }
 
   Future<Map<String, dynamic>> updateBalance(
@@ -1385,27 +1446,350 @@ class AdminApi {
     double amount,
     String type,
     String description,
-  ) =>
-      _request(
+  ) {
+    final payload = {
+      'amount': amount,
+      'type': type,
+      'description': description,
+    };
+    return _requestWithFallback(
+      [
         '/users/$userId/balance',
+        '/users/$userId/wallet',
+        '/customers/$userId/balance',
+      ],
+      method: 'POST',
+      body: payload,
+    );
+  }
+
+  Future<Map<String, dynamic>> getUserDetail(int id) async {
+    try {
+      return await _requestWithFallback([
+        '/users/$id/detail',
+        '/users/$id',
+        '/customers/$id',
+        '/members/$id',
+      ]);
+    } on ApiException catch (error) {
+      if (!_isMissingRoute(error)) rethrow;
+      try {
+        final users = await getUsers(search: '$id');
+        final items = _asList(users['items']).map(_asMap).toList();
+        final user = items.firstWhere(
+          (item) => _asInt(item['id']) == id,
+          orElse: () => <String, dynamic>{'id': id},
+        );
+        return {'success': true, 'user': user, 'supported': false};
+      } catch (_) {
+        return {
+          'success': true,
+          'user': <String, dynamic>{'id': id},
+          'supported': false,
+        };
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>> getUserSessions(int id) async {
+    try {
+      final data = await _requestWithFallback([
+        '/users/$id/sessions',
+        '/users/$id/devices',
+        '/users/$id/session-history',
+      ]);
+      final payload = _asMap(data['data']);
+      final rawItems = data['items'] ??
+          data['sessions'] ??
+          payload['items'] ??
+          payload['sessions'];
+      return {
+        ...data,
+        'items': _asList(rawItems).map(_normalizeUserSession).toList(),
+      };
+    } on ApiException catch (error) {
+      if (!_isMissingRoute(error)) rethrow;
+      return {
+        'success': true,
+        'supported': false,
+        'items': const <Map<String, dynamic>>[],
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>> getUserLogs(int id) async {
+    try {
+      final data = await _requestWithFallback([
+        '/users/$id/logs',
+        '/users/$id/activity',
+        '/users/$id/events',
+      ]);
+      final payload = _asMap(data['data']);
+      final rawItems =
+          data['items'] ?? data['logs'] ?? payload['items'] ?? payload['logs'];
+      return {
+        ...data,
+        'items': _asList(rawItems).map(_normalizeUserLog).toList(),
+      };
+    } on ApiException catch (error) {
+      if (!_isMissingRoute(error)) rethrow;
+      return {
+        'success': true,
+        'supported': false,
+        'items': const <Map<String, dynamic>>[],
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>> getUserOrders(
+    int id, {
+    int page = 1,
+  }) async {
+    final query = '?page=$page';
+    try {
+      final data = await _requestWithFallback([
+        '/users/$id/orders$query',
+        '/users/$id/history$query',
+        '/users/$id/orders/list$query',
+        '/orders$query&user_id=$id',
+        '/orders$query&customer_id=$id',
+      ]);
+      final payload = _asMap(data['data']);
+      final rawItems = data['items'] ??
+          data['orders'] ??
+          payload['items'] ??
+          payload['orders'];
+      final items = _asList(rawItems).map(_normalizeUserOrder).toList();
+      return {
+        ...data,
+        'items': items,
+        'total': _asInt(data['total'],
+            fallback: _asInt(payload['total'], fallback: items.length)),
+        'page': _asInt(data['page'],
+            fallback: _asInt(payload['page'], fallback: page)),
+        'pages': _asInt(data['pages'],
+            fallback: _asInt(payload['pages'], fallback: 1)),
+      };
+    } on ApiException catch (error) {
+      if (!_isMissingRoute(error)) rethrow;
+      try {
+        final data = await getOrders(page: page, search: '$id');
+        final allOrders =
+            _asList(data['items']).map(_normalizeUserOrder).toList();
+        final filtered =
+            allOrders.where((order) => _orderBelongsToUser(order, id)).toList();
+        return {
+          'success': true,
+          'supported': false,
+          'items': filtered,
+          'total': filtered.length,
+          'page': page,
+          'pages': 1,
+        };
+      } catch (_) {
+        return {
+          'success': true,
+          'supported': false,
+          'items': const <Map<String, dynamic>>[],
+          'total': 0,
+          'page': page,
+          'pages': 1,
+        };
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>> getUser360(int id) async {
+    Map<String, dynamic> detail = {
+      'user': <String, dynamic>{'id': id}
+    };
+    Map<String, dynamic> ordersData = {'items': const <Map<String, dynamic>>[]};
+    Map<String, dynamic> logsData = {'items': const <Map<String, dynamic>>[]};
+    Map<String, dynamic> sessionsData = {
+      'items': const <Map<String, dynamic>>[]
+    };
+
+    try {
+      detail = await getUserDetail(id);
+    } catch (_) {}
+    try {
+      ordersData = await getUserOrders(id);
+    } catch (_) {}
+    try {
+      logsData = await getUserLogs(id);
+    } catch (_) {}
+    try {
+      sessionsData = await getUserSessions(id);
+    } catch (_) {}
+
+    final user = _asMap(detail['user']).isNotEmpty
+        ? _asMap(detail['user'])
+        : _asMap(detail['data']).isNotEmpty
+            ? _asMap(detail['data'])
+            : _asMap(detail);
+
+    final orders =
+        _asList(ordersData['items']).map(_normalizeUserOrder).toList();
+    final logs = _asList(logsData['items']).map(_normalizeUserLog).toList();
+    final sessions =
+        _asList(sessionsData['items']).map(_normalizeUserSession).toList();
+
+    final topServicesMap = <String, Map<String, dynamic>>{};
+    var totalSpent = 0.0;
+    var completedOrders = 0;
+    var cancelledOrders = 0;
+
+    for (final order in orders) {
+      final amount = _asDouble(order['amount']);
+      totalSpent += amount;
+      final status = '${order['status'] ?? ''}'.toLowerCase();
+      if (status == 'completed' || status == 'success') {
+        completedOrders++;
+      }
+      if (status == 'cancelled' || status == 'failed' || status == 'refunded') {
+        cancelledOrders++;
+      }
+
+      final key =
+          '${order['service_id'] ?? order['service_name'] ?? 'unknown'}';
+      final bucket = topServicesMap[key] ??
+          <String, dynamic>{
+            'service_id': order['service_id'],
+            'service_name': order['service_name'] ?? '-',
+            'count': 0,
+            'total_amount': 0.0,
+            'last_order_date': '',
+          };
+      bucket['count'] = _asInt(bucket['count']) + 1;
+      bucket['total_amount'] = _asDouble(bucket['total_amount']) + amount;
+      final dateText = '${order['date'] ?? ''}';
+      if (dateText.isNotEmpty) {
+        bucket['last_order_date'] = dateText;
+      }
+      topServicesMap[key] = bucket;
+    }
+
+    final topServices = topServicesMap.values.toList()
+      ..sort((a, b) => _asInt(b['count']).compareTo(_asInt(a['count'])));
+
+    final ipMap = <String, Map<String, dynamic>>{};
+    for (final item in [...logs, ...sessions]) {
+      final ip = _pickString(item, ['ip', 'ip_address', 'user_ip']);
+      if (ip.isEmpty) continue;
+      final bucket = ipMap[ip] ??
+          <String, dynamic>{
+            'ip': ip,
+            'count': 0,
+            'last_seen': '',
+            'country': '',
+            'user_agent': '',
+          };
+      bucket['count'] = _asInt(bucket['count']) + 1;
+      final dateText = _pickString(item, ['date', 'created_at', 'time']);
+      if (dateText.isNotEmpty) bucket['last_seen'] = dateText;
+      final country = _pickString(item, ['country', 'geo_country'], '');
+      if (country.isNotEmpty) bucket['country'] = country;
+      final ua = _pickString(item, ['user_agent', 'browser'], '');
+      if (ua.isNotEmpty) bucket['user_agent'] = ua;
+      ipMap[ip] = bucket;
+    }
+    final ipSummary = ipMap.values.toList()
+      ..sort((a, b) => _asInt(b['count']).compareTo(_asInt(a['count'])));
+
+    final timeline = <Map<String, dynamic>>[];
+    for (final order in orders) {
+      timeline.add({
+        'type': 'order',
+        'date': order['date'],
+        'title': 'Siparis #${order['id']}',
+        'message': '${order['service_name']} - ${order['status']}',
+        'severity': 'info',
+      });
+    }
+    for (final log in logs) {
+      timeline.add({
+        'type': 'activity',
+        'date': log['date'],
+        'title': '${log['action']}',
+        'message': '${log['message']}',
+        'severity': '${log['level']}',
+      });
+    }
+    for (final session in sessions) {
+      timeline.add({
+        'type': 'session',
+        'date': session['date'],
+        'title': 'Oturum',
+        'message': '${session['ip']} - ${session['device']}',
+        'severity': 'low',
+      });
+    }
+    timeline.sort((a, b) => '${b['date']}'.compareTo('${a['date']}'));
+
+    final failedLogins = logs
+        .where((log) =>
+            '${log['action']}'.toLowerCase().contains('fail') ||
+            '${log['action']}'.toLowerCase().contains('error'))
+        .length;
+    final blockedSignals = logs
+        .where((log) =>
+            '${log['action']}'.toLowerCase().contains('block') ||
+            '${log['message']}'.toLowerCase().contains('block'))
+        .length;
+    final riskScore = (failedLogins * 8 +
+            blockedSignals * 12 +
+            (ipSummary.length > 3 ? 15 : 0))
+        .clamp(0, 100);
+
+    final metrics = <String, dynamic>{
+      'total_orders': orders.length,
+      'total_spent': double.parse(totalSpent.toStringAsFixed(2)),
+      'completed_orders': completedOrders,
+      'cancelled_orders': cancelledOrders,
+      'avg_order_value': orders.isNotEmpty ? totalSpent / orders.length : 0.0,
+      'unique_ips': ipSummary.length,
+      'last_order_date':
+          orders.isNotEmpty ? _pickString(orders.first, ['date'], '-') : '-',
+      'risk_score': riskScore,
+    };
+
+    return {
+      'success': true,
+      'user': user,
+      'orders': orders,
+      'logs': logs,
+      'sessions': sessions,
+      'top_services': topServices.take(10).toList(),
+      'ip_summary': ipSummary,
+      'timeline': timeline,
+      'metrics': metrics,
+      'security': {
+        'failed_logins': failedLogins,
+        'blocked_signals': blockedSignals,
+        'unique_ips': ipSummary.length,
+      },
+    };
+  }
+
+  Future<Map<String, dynamic>> blockUser(int id) => _requestWithFallback(
+        [
+          '/users/$id/block',
+          '/users/$id/status',
+          '/customers/$id/block',
+        ],
         method: 'POST',
-        body: {'amount': amount, 'type': type, 'description': description},
+        body: {'status': 'blocked', 'action_type': 'block'},
       );
 
-  Future<Map<String, dynamic>> getUserDetail(int id) =>
-      _request('/users/$id/detail');
-
-  Future<Map<String, dynamic>> getUserSessions(int id) =>
-      _request('/users/$id/sessions');
-
-  Future<Map<String, dynamic>> getUserLogs(int id) =>
-      _request('/users/$id/logs');
-
-  Future<Map<String, dynamic>> blockUser(int id) =>
-      _request('/users/$id/block', method: 'POST');
-
   Future<Map<String, dynamic>> resetUserPassword(int id) =>
-      _request('/users/$id/reset-password', method: 'POST');
+      _requestWithFallback(
+        [
+          '/users/$id/reset-password',
+          '/users/$id/password/reset',
+          '/customers/$id/reset-password',
+        ],
+        method: 'POST',
+      );
 
   Future<Map<String, dynamic>> getPayments({
     int page = 1,
@@ -1574,7 +1958,7 @@ class AdminApi {
       ], method: 'POST', body: payload);
     } on ApiException catch (error) {
       if (_isMissingRoute(error)) {
-        throw ApiException('Kampanya güncelleme bu sunucuda desteklenmiyor');
+        throw ApiException('Kampanya guncelleme bu sunucuda desteklenmiyor');
       }
       rethrow;
     }
@@ -1585,21 +1969,161 @@ class AdminApi {
   Future<Map<String, dynamic>> runCronJob(String job) =>
       _request('/cron/run', method: 'POST', body: {'job': job});
 
-  Future<Map<String, dynamic>> getSecurity({int page = 1}) async {
-    final data = await _request('/security?page=$page');
-    final items = _asList(data['items'] ?? data['blocked'])
-        .map(_normalizeSecurityItem)
-        .toList();
+  Future<Map<String, dynamic>> getSecurityOverview({int page = 1}) async {
+    final security = await getSecurity(page: page);
+    final payload = _asMap(security['data']);
+
+    final scopes = <Map<String, dynamic>>[
+      security,
+      payload,
+      _asMap(security['summary']),
+      _asMap(security['stats']),
+      _asMap(security['totals']),
+      _asMap(security['today_stats']),
+      _asMap(security['realtime']),
+      _asMap(security['metrics']),
+      _asMap(payload['summary']),
+      _asMap(payload['stats']),
+      _asMap(payload['totals']),
+      _asMap(payload['today_stats']),
+      _asMap(payload['realtime']),
+      _asMap(payload['metrics']),
+    ];
+
+    int pickInt(List<String> keys, {int fallback = 0}) {
+      for (final scope in scopes) {
+        for (final key in keys) {
+          final value = _asNullableInt(scope[key]);
+          if (value != null) return value;
+        }
+      }
+      return fallback;
+    }
+
+    double pickDouble(List<String> keys, {double fallback = 0}) {
+      for (final scope in scopes) {
+        for (final key in keys) {
+          final value = scope[key];
+          if (value == null) continue;
+          return _asDouble(value, fallback: fallback);
+        }
+      }
+      return fallback;
+    }
+
+    final blockedItems =
+        _asList(security['items']).map((item) => _asMap(item)).toList();
     final events =
-        _asList(data['events']).map(_normalizeSecurityLogItem).toList();
+        _asList(security['events']).map(_normalizeSecurityLogItem).toList();
+
+    final mergedEvents = <Map<String, dynamic>>[];
+    final seen = <String>{};
+
+    void appendLogs(List<dynamic> source) {
+      for (final item in source) {
+        final normalized = _normalizeSecurityLogItem(item);
+        final signature =
+            '${normalized['date']}|${normalized['ip']}|${normalized['event']}|${normalized['message']}';
+        if (!seen.add(signature)) continue;
+        mergedEvents.add(normalized);
+      }
+    }
+
+    appendLogs(events);
+    try {
+      final logsData = await getSecurityLogs(page: 1);
+      appendLogs(_asList(logsData['items']));
+    } catch (_) {}
+
+    final totalRequests = pickInt(
+      [
+        'total_requests',
+        'requests_total',
+        'request_count',
+        'all_requests',
+        'total',
+      ],
+      fallback: mergedEvents.length,
+    );
+    final blockedRequests = pickInt(
+      [
+        'blocked_requests',
+        'blocked_attempts',
+        'total_blocked',
+        'blocked',
+      ],
+      fallback: blockedItems.length,
+    );
+
+    final stats = <String, dynamic>{
+      'total_requests': totalRequests,
+      'blocked_requests': blockedRequests,
+      'failed_logins': pickInt([
+        'failed_logins',
+        'failed_attempts',
+        'failed_login_attempts',
+      ]),
+      'high_risk_events': pickInt([
+        'high_risk_events',
+        'critical_events',
+        'high_risk_count',
+      ]),
+      'active_blocks': pickInt([
+        'active_blocks',
+        'blocked_ips',
+      ], fallback: blockedItems.length),
+      'cf_threat_score': pickDouble([
+        'cf_threat_score',
+        'avg_threat_score',
+        'threat_score',
+      ]),
+      'bot_percentage': pickDouble([
+        'bot_percentage',
+        'avg_bot_percentage',
+      ]),
+      'block_rate': totalRequests > 0
+          ? ((blockedRequests / totalRequests) * 100).clamp(0, 100)
+          : 0,
+    };
 
     return {
-      ...data,
-      'items': items,
-      'events': events,
-      'page': _asInt(data['page'], fallback: page),
-      'pages': _asInt(data['pages'], fallback: 1),
+      ...security,
+      'stats': stats,
+      'blocked_items': blockedItems,
+      'events': mergedEvents,
     };
+  }
+
+  Future<Map<String, dynamic>> getSecurity({int page = 1}) async {
+    try {
+      final data = await _request('/security?page=$page');
+      final items = _asList(data['items'] ?? data['blocked'])
+          .map(_normalizeSecurityItem)
+          .toList();
+      final events =
+          _asList(data['events']).map(_normalizeSecurityLogItem).toList();
+
+      return {
+        ...data,
+        'items': items,
+        'events': events,
+        'page': _asInt(data['page'], fallback: page),
+        'pages': _asInt(data['pages'], fallback: 1),
+      };
+    } on ApiException catch (error) {
+      if (!_isMissingRoute(error)) {
+        rethrow;
+      }
+      return {
+        'success': true,
+        'supported': false,
+        'items': const <Map<String, dynamic>>[],
+        'events': const <Map<String, dynamic>>[],
+        'page': page,
+        'pages': 1,
+        'message': 'Bu sunucuda security endpointi bulunmuyor.',
+      };
+    }
   }
 
   Future<Map<String, dynamic>> securityAction(String ip, String actionType) =>
@@ -1609,30 +2133,95 @@ class AdminApi {
   Future<Map<String, dynamic>> getRateLimitSettings() async {
     try {
       final data = await _request('/security/rate-limit');
+      final payload = _asMap(data['data']);
+      final source = <String, dynamic>{...payload, ...data};
+      final maxRequests = _asInt(
+        source['max_requests_per_minute'] ??
+            source['max_requests'] ??
+            source['rate_limit_requests'] ??
+            source['limit'],
+        fallback: 60,
+      );
+      final windowSeconds = _asInt(
+        source['window_seconds'] ??
+            source['rate_limit_window'] ??
+            source['window'],
+        fallback: 60,
+      );
+      final banDurationMinutes = _asInt(
+        source['ban_duration_minutes'] ??
+            source['ban_duration'] ??
+            source['block_duration_minutes'],
+        fallback: 30,
+      );
+
       return {
         ...data,
-        'enabled': data['enabled'] ?? data['active'] ?? false,
-        'max_requests':
-            _asInt(data['max_requests'] ?? data['limit'], fallback: 60),
-        'window_seconds':
-            _asInt(data['window_seconds'] ?? data['window'], fallback: 60),
+        ...payload,
+        'enabled': _asBool(source['enabled'] ?? source['active']) ? 1 : 0,
+        'max_requests': maxRequests,
+        'max_requests_per_minute': maxRequests,
+        'max_requests_per_ip':
+            _asInt(source['max_requests_per_ip'], fallback: maxRequests),
+        'window_seconds': windowSeconds,
+        'ban_duration_minutes': banDurationMinutes,
+        'whitelist': '${source['whitelist'] ?? source['ip_whitelist'] ?? ''}',
       };
     } on ApiException catch (e) {
       if (!_isMissingRouteError(e.message)) rethrow;
       return {
         'success': true,
-        'enabled': false,
+        'enabled': 0,
         'max_requests': 60,
+        'max_requests_per_minute': 60,
+        'max_requests_per_ip': 60,
         'window_seconds': 60,
+        'ban_duration_minutes': 30,
+        'whitelist': '',
         'message':
-            'Bu yedek eklenti sürümünde rate limit endpointi bulunmuyor.',
+            'Bu yedek eklenti surumunde rate limit endpointi bulunmuyor.',
       };
     }
   }
 
   Future<Map<String, dynamic>> saveRateLimitSettings(
-          Map<String, dynamic> data) =>
-      _request('/security/rate-limit', method: 'POST', body: data);
+      Map<String, dynamic> data) {
+    final enabled = _asBool(data['enabled'] ?? data['active']) ? 1 : 0;
+    final maxRequests = _asInt(
+      data['max_requests_per_minute'] ??
+          data['max_requests'] ??
+          data['rate_limit_requests'] ??
+          data['limit'],
+      fallback: 60,
+    );
+    final windowSeconds = _asInt(
+      data['window_seconds'] ?? data['rate_limit_window'] ?? data['window'],
+      fallback: 60,
+    );
+
+    final payload = <String, dynamic>{
+      ...data,
+      'enabled': enabled,
+      'active': enabled,
+      'max_requests': maxRequests,
+      'max_requests_per_minute': maxRequests,
+      'rate_limit_requests': maxRequests,
+      'window_seconds': windowSeconds,
+      'rate_limit_window': windowSeconds,
+      'max_requests_per_ip': _asInt(data['max_requests_per_ip'],
+          fallback: _asInt(data['max_requests_per_minute'] ?? maxRequests,
+              fallback: maxRequests)),
+      'ban_duration_minutes': _asInt(
+        data['ban_duration_minutes'] ??
+            data['ban_duration'] ??
+            data['block_duration_minutes'],
+        fallback: 30,
+      ),
+      'whitelist': '${data['whitelist'] ?? data['ip_whitelist'] ?? ''}',
+    };
+
+    return _request('/security/rate-limit', method: 'POST', body: payload);
+  }
 
   Future<Map<String, dynamic>> getSecurityLogs({int page = 1}) async {
     try {
@@ -1645,17 +2234,154 @@ class AdminApi {
       };
     } on ApiException catch (e) {
       if (!_isMissingRouteError(e.message)) rethrow;
-      final data = await _request('/security?page=$page');
-      final items =
-          _asList(data['events']).map(_normalizeSecurityLogItem).toList();
-      return {
-        'success': true,
-        'items': items,
-        'page': _asInt(data['page'], fallback: page),
-        'pages': _asInt(data['pages'], fallback: 1),
-        'total': _asInt(data['total_events'], fallback: items.length),
+      try {
+        final data = await _request('/security?page=$page');
+        final items =
+            _asList(data['events']).map(_normalizeSecurityLogItem).toList();
+        return {
+          'success': true,
+          'items': items,
+          'page': _asInt(data['page'], fallback: page),
+          'pages': _asInt(data['pages'], fallback: 1),
+          'total': _asInt(data['total_events'], fallback: items.length),
+        };
+      } on ApiException catch (fallbackError) {
+        if (!_isMissingRouteError(fallbackError.message)) {
+          rethrow;
+        }
+        return {
+          'success': true,
+          'supported': false,
+          'items': const <Map<String, dynamic>>[],
+          'page': page,
+          'pages': 1,
+          'total': 0,
+          'message': 'Bu sunucuda security log endpointi bulunmuyor.',
+        };
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>> getSecuritySettingsBundle() async {
+    Map<String, dynamic> settingsResponse = <String, dynamic>{};
+    try {
+      settingsResponse = await _requestWithFallback([
+        '/security/settings',
+        '/settings/security',
+        '/settings',
+      ]);
+    } on ApiException catch (error) {
+      if (!_isMissingRoute(error)) {
+        rethrow;
+      }
+      try {
+        settingsResponse = await getSettings();
+      } on ApiException catch (fallbackError) {
+        if (!_isMissingRoute(fallbackError)) {
+          rethrow;
+        }
+        settingsResponse = <String, dynamic>{
+          'success': true,
+          'settings': <String, dynamic>{},
+          'message':
+              'Bu sunucuda guvenlik ayari endpointi bulunmuyor. Varsayilan degerler kullaniliyor.',
+        };
+      }
+    }
+
+    final payload = _asMap(settingsResponse['data']);
+    var settings = _asMap(settingsResponse['settings']);
+    if (settings.isEmpty) settings = _asMap(payload['settings']);
+    if (settings.isEmpty) settings = _asMap(settingsResponse['security']);
+    if (settings.isEmpty) settings = _asMap(payload['security']);
+    if (settings.isEmpty)
+      settings = _asMap(settingsResponse['security_settings']);
+    if (settings.isEmpty) settings = _asMap(payload['security_settings']);
+    if (settings.isEmpty) {
+      settings = Map<String, dynamic>.from(settingsResponse);
+      settings.removeWhere(
+          (key, _) => key == 'success' || key == 'message' || key == 'data');
+    }
+
+    Map<String, dynamic> rateLimit;
+    try {
+      rateLimit = await getRateLimitSettings();
+    } catch (_) {
+      rateLimit = {
+        'enabled': _asBool(settings['enable_rate_limiting']) ? 1 : 0,
+        'max_requests': _asInt(settings['rate_limit_requests'], fallback: 60),
+        'max_requests_per_minute':
+            _asInt(settings['rate_limit_requests'], fallback: 60),
+        'max_requests_per_ip':
+            _asInt(settings['rate_limit_requests'], fallback: 60),
+        'window_seconds': _asInt(settings['rate_limit_window'], fallback: 60),
+        'ban_duration_minutes':
+            _asInt(settings['block_duration'], fallback: 30) ~/ 60,
+        'whitelist': '${settings['admin_ip_allowlist'] ?? ''}',
       };
     }
+
+    final mergedSettings = <String, dynamic>{...settings};
+    mergedSettings['enable_rate_limiting'] =
+        _asBool(mergedSettings['enable_rate_limiting'] ?? rateLimit['enabled']);
+    mergedSettings['rate_limit_requests'] = _asInt(
+      mergedSettings['rate_limit_requests'] ?? rateLimit['max_requests'],
+      fallback: 60,
+    );
+    mergedSettings['rate_limit_window'] = _asInt(
+      mergedSettings['rate_limit_window'] ?? rateLimit['window_seconds'],
+      fallback: 60,
+    );
+
+    return {
+      'success': true,
+      'settings': mergedSettings,
+      'rate_limit': rateLimit,
+      'raw_settings': settingsResponse,
+    };
+  }
+
+  Future<Map<String, dynamic>> saveSecuritySettingsBundle({
+    required Map<String, dynamic> settings,
+    required Map<String, dynamic> rateLimit,
+  }) async {
+    final result = <String, dynamic>{'success': true};
+    var anyEndpointHandled = false;
+
+    if (settings.isNotEmpty) {
+      final cleanSettings = Map<String, dynamic>.from(settings)
+        ..removeWhere((key, _) => key.toString().startsWith('_'));
+      try {
+        result['settings'] = await saveSettings(cleanSettings);
+        anyEndpointHandled = true;
+      } on ApiException catch (error) {
+        if (!_isMissingRoute(error)) {
+          rethrow;
+        }
+        result['settings_supported'] = false;
+        result['settings_error'] = error.message;
+      }
+    }
+
+    if (rateLimit.isNotEmpty) {
+      try {
+        result['rate_limit'] = await saveRateLimitSettings(rateLimit);
+        anyEndpointHandled = true;
+      } on ApiException catch (error) {
+        if (!_isMissingRoute(error)) {
+          rethrow;
+        }
+        result['rate_limit_supported'] = false;
+        result['rate_limit_error'] = error.message;
+      }
+    }
+
+    if (!anyEndpointHandled) {
+      throw ApiException(
+          'Bu sunucuda guvenlik ayari kaydetme endpointi bulunamadi.');
+    }
+
+    return result;
   }
 
   Future<Map<String, dynamic>> getSettings() => _request('/settings');
@@ -1674,12 +2400,7 @@ class AdminApi {
   }
 
   bool _isMissingRouteError(String message) {
-    final lower = message.toLowerCase();
-    return lower.contains('no route was found') ||
-        lower.contains('route') ||
-        lower.contains('not found') ||
-        lower.contains('eşleşen yol bulunamadı') ||
-        lower.contains('bulunamadı');
+    return _looksLikeRouteMessage(message);
   }
 
   String _pickString(Map<String, dynamic> data, List<String> keys,
@@ -1691,6 +2412,68 @@ class AdminApi {
       if (text.isNotEmpty) return text;
     }
     return fallback;
+  }
+
+  Map<String, dynamic> _normalizeUserOrder(dynamic item) {
+    final data =
+        item is Map ? Map<String, dynamic>.from(item) : <String, dynamic>{};
+    return {
+      ...data,
+      'id': _asInt(data['id'] ?? data['order_id']),
+      'user_id': _asInt(data['user_id'] ?? data['uid']),
+      'service_id': _asInt(data['service_id'] ?? data['sid']),
+      'service_name':
+          _pickString(data, ['service_name', 'service', 'name'], '-'),
+      'status': _pickString(data, ['status', 'order_status'], 'pending'),
+      'amount': _asDouble(
+        data['amount'] ??
+            data['total'] ??
+            data['price'] ??
+            data['charge'] ??
+            data['cost'],
+      ),
+      'date':
+          _pickString(data, ['date', 'created_at', 'time', 'order_date'], '-'),
+    };
+  }
+
+  Map<String, dynamic> _normalizeUserLog(dynamic item) {
+    final data =
+        item is Map ? Map<String, dynamic>.from(item) : <String, dynamic>{};
+    return {
+      ...data,
+      'action': _pickString(data, ['action', 'event', 'type'], 'activity'),
+      'message':
+          _pickString(data, ['message', 'details', 'reason', 'note'], '-'),
+      'level': _pickString(data, ['level', 'risk', 'severity', 'type'], 'info'),
+      'date':
+          _pickString(data, ['date', 'created_at', 'time', 'timestamp'], '-'),
+      'ip': _pickString(data, ['ip', 'ip_address', 'user_ip', 'address'], '-'),
+    };
+  }
+
+  Map<String, dynamic> _normalizeUserSession(dynamic item) {
+    final data =
+        item is Map ? Map<String, dynamic>.from(item) : <String, dynamic>{};
+    return {
+      ...data,
+      'ip': _pickString(data, ['ip', 'ip_address', 'user_ip', 'address'], '-'),
+      'date':
+          _pickString(data, ['date', 'created_at', 'time', 'last_seen'], '-'),
+      'device': _pickString(data, ['device', 'browser', 'user_agent'], '-'),
+      'country': _pickString(data, ['country', 'geo_country', 'location'], ''),
+      'user_agent': _pickString(data, ['user_agent', 'browser'], ''),
+    };
+  }
+
+  bool _orderBelongsToUser(Map<String, dynamic> order, int userId) {
+    final uid = _asInt(order['user_id']);
+    if (uid > 0 && uid == userId) return true;
+    final raw =
+        '${order['user'] ?? order['customer'] ?? order['username'] ?? ''}'
+            .trim();
+    if (raw == '$userId') return true;
+    return false;
   }
 
   Map<String, dynamic> _normalizeSecurityItem(dynamic item) {

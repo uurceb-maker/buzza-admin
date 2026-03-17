@@ -1,122 +1,170 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+
 import '../../config/theme.dart';
 import '../../services/admin_api.dart';
 
 class UsersTab extends StatefulWidget {
   const UsersTab({super.key});
+
   @override
   State<UsersTab> createState() => _UsersTabState();
 }
 
 class _UsersTabState extends State<UsersTab> {
-  List<dynamic> _items = [];
-  int _page = 1, _total = 0, _pages = 1;
+  final TextEditingController _searchCtrl = TextEditingController();
+  final NumberFormat _moneyFmt = NumberFormat('#,##0.00', 'tr_TR');
+
+  List<Map<String, dynamic>> _items = [];
+  int _page = 1;
+  int _pages = 1;
+  int _total = 0;
   bool _loading = true;
   String _search = '';
-  final _searchCtrl = TextEditingController();
-  final _fmt = NumberFormat('#,##0.00', 'tr_TR');
+
+  int _asInt(dynamic value, {int fallback = 0}) {
+    if (value is int) return value;
+    if (value is double) return value.round();
+    return int.tryParse('$value') ?? fallback;
+  }
+
+  double _asDouble(dynamic value, {double fallback = 0}) {
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    return double.tryParse('$value') ?? fallback;
+  }
 
   @override
-  void initState() { super.initState(); _load(); }
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final d = await AdminApi().getUsers(page: _page, search: _search);
+      final data = await AdminApi().getUsers(page: _page, search: _search);
+      if (!mounted) return;
       setState(() {
-        _items = d['items'] as List? ?? [];
-        _total = d['total'] ?? 0;
-        _pages = d['pages'] ?? 1;
+        _items = (data['items'] as List? ?? [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        _page = _asInt(data['page'], fallback: _page);
+        _pages = _asInt(data['pages'], fallback: 1);
+        _total = _asInt(data['total'], fallback: _items.length);
         _loading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _loading = false);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$e'), backgroundColor: AppTheme.error),
+      );
     }
   }
 
-  void _showUserDetail(Map<String, dynamic> user) {
+  void _openUserDetail(Map<String, dynamic> user) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: AppTheme.bgCard,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.75,
-        maxChildSize: 0.95,
-        minChildSize: 0.4,
-        builder: (ctx2, scrollCtrl) => _UserDetailSheet(user: user, scrollController: scrollCtrl, fmt: _fmt, onUpdate: _load),
+      backgroundColor: AppTheme.bgCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => FractionallySizedBox(
+        heightFactor: 0.92,
+        child: _UserInsightSheet(
+          user: user,
+          moneyFmt: _moneyFmt,
+          onRefreshParent: _load,
+        ),
       ),
     );
   }
 
-  void _showBalanceDialog(Map<String, dynamic> user) {
+  Future<void> _showBalanceDialog(Map<String, dynamic> user) async {
     final amountCtrl = TextEditingController();
     final descCtrl = TextEditingController();
-    String type = 'add';
+    var type = 'add';
 
-    showModalBottomSheet(
+    await showModalBottomSheet(
       context: context,
-      backgroundColor: AppTheme.bgCard,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      backgroundColor: AppTheme.bgCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (ctx) => StatefulBuilder(
         builder: (ctx2, setSt) => Padding(
-          padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(ctx2).viewInsets.bottom + 20),
+          padding: EdgeInsets.fromLTRB(
+              20, 20, 20, MediaQuery.of(ctx2).viewInsets.bottom + 20),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('${user['display_name'] ?? user['email']} — Bakiye', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 4),
-              Text('Mevcut: ${_fmt.format(double.tryParse('${user['balance']}') ?? 0)} ₺', style: const TextStyle(fontSize: 13, color: AppTheme.success, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 16),
-
-              // Type selector
-              Row(children: [
-                _typeChip('Ekle', 'add', type == 'add', AppTheme.success, () => setSt(() => type = 'add')),
-                const SizedBox(width: 8),
-                _typeChip('Çıkar', 'subtract', type == 'subtract', AppTheme.error, () => setSt(() => type = 'subtract')),
-                const SizedBox(width: 8),
-                _typeChip('Ayarla', 'set', type == 'set', AppTheme.info, () => setSt(() => type = 'set')),
-              ]),
-              const SizedBox(height: 16),
-
-              TextField(
-                controller: amountCtrl,
-                keyboardType: TextInputType.number,
-                decoration: AppTheme.inputDecoration(hint: 'Miktar (₺)', prefixIcon: Icons.attach_money),
+              Text('${user['display_name'] ?? user['email'] ?? '-'} - Bakiye',
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  _chip('Ekle', type == 'add', AppTheme.success,
+                      () => setSt(() => type = 'add')),
+                  const SizedBox(width: 8),
+                  _chip('Cikar', type == 'subtract', AppTheme.error,
+                      () => setSt(() => type = 'subtract')),
+                  const SizedBox(width: 8),
+                  _chip('Ayarla', type == 'set', AppTheme.info,
+                      () => setSt(() => type = 'set')),
+                ],
               ),
               const SizedBox(height: 10),
               TextField(
-                controller: descCtrl,
-                decoration: AppTheme.inputDecoration(hint: 'Açıklama (opsiyonel)', prefixIcon: Icons.note),
-              ),
-              const SizedBox(height: 16),
-
+                  controller: amountCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: AppTheme.inputDecoration(
+                      hint: 'Miktar',
+                      label: 'Bakiye miktari',
+                      prefixIcon: Icons.currency_lira_rounded)),
+              const SizedBox(height: 10),
+              TextField(
+                  controller: descCtrl,
+                  decoration: AppTheme.inputDecoration(
+                      hint: 'Not',
+                      label: 'Aciklama',
+                      prefixIcon: Icons.notes_rounded)),
+              const SizedBox(height: 14),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
                   onPressed: () async {
-                    final amount = double.tryParse(amountCtrl.text);
+                    final amount = double.tryParse(amountCtrl.text.trim());
                     if (amount == null || amount <= 0) return;
                     Navigator.pop(ctx);
                     try {
-                      await AdminApi().updateBalance(user['id'], amount, type, descCtrl.text);
-                      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Bakiye güncellendi ✅'), backgroundColor: AppTheme.success));
+                      await AdminApi().updateBalance(_asInt(user['id']), amount,
+                          type, descCtrl.text.trim());
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content: Text('Bakiye guncellendi'),
+                          backgroundColor: AppTheme.success));
                       _load();
                     } catch (e) {
-                      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                          content: Text('$e'),
+                          backgroundColor: AppTheme.error));
                     }
                   },
                   icon: const Icon(Icons.save_rounded, size: 18),
-                  label: const Text('Güncelle'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: type == 'subtract' ? AppTheme.error : type == 'set' ? AppTheme.info : AppTheme.success,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
+                  label: const Text('Kaydet'),
                 ),
               ),
             ],
@@ -126,7 +174,7 @@ class _UsersTabState extends State<UsersTab> {
     );
   }
 
-  Widget _typeChip(String label, String value, bool selected, Color color, VoidCallback onTap) {
+  Widget _chip(String label, bool selected, Color color, VoidCallback onTap) {
     return Expanded(
       child: GestureDetector(
         onTap: onTap,
@@ -137,10 +185,30 @@ class _UsersTabState extends State<UsersTab> {
             borderRadius: BorderRadius.circular(10),
             border: Border.all(color: selected ? color : AppTheme.glassBorder),
           ),
-          child: Center(child: Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: selected ? color : AppTheme.textMuted))),
+          child: Center(
+              child: Text(label,
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: selected ? color : AppTheme.textMuted))),
         ),
       ),
     );
+  }
+
+  Future<void> _blockUser(Map<String, dynamic> user) async {
+    try {
+      await AdminApi().blockUser(_asInt(user['id']));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Kullanici engellendi'),
+          backgroundColor: AppTheme.success));
+      _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+    }
   }
 
   @override
@@ -149,34 +217,148 @@ class _UsersTabState extends State<UsersTab> {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: Column(children: [
-            TextField(
-              controller: _searchCtrl,
-              decoration: AppTheme.inputDecoration(hint: 'İsim, e-posta veya ID ile ara...', prefixIcon: Icons.search),
-              onSubmitted: (v) { _search = v; _page = 1; _load(); },
-            ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('$_total kullanıcı', style: const TextStyle(fontSize: 12, color: AppTheme.textMuted)),
-                Text('Sayfa $_page / $_pages', style: const TextStyle(fontSize: 12, color: AppTheme.textMuted)),
-              ],
-            ),
-          ]),
+          child: Column(
+            children: [
+              TextField(
+                controller: _searchCtrl,
+                decoration: AppTheme.inputDecoration(
+                    hint: 'Isim, e-posta veya ID',
+                    label: 'Kullanici ara',
+                    prefixIcon: Icons.search_rounded),
+                onSubmitted: (value) {
+                  _search = value.trim();
+                  _page = 1;
+                  _load();
+                },
+              ),
+              const SizedBox(height: 8),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                Text('$_total kullanici',
+                    style: const TextStyle(
+                        fontSize: 12, color: AppTheme.textMuted)),
+                Text('Sayfa $_page / $_pages',
+                    style: const TextStyle(
+                        fontSize: 12, color: AppTheme.textMuted)),
+              ]),
+            ],
+          ),
         ),
         Expanded(
           child: _loading
-              ? const Center(child: CircularProgressIndicator(color: AppTheme.primary))
+              ? const Center(
+                  child: CircularProgressIndicator(color: AppTheme.primary))
               : RefreshIndicator(
                   onRefresh: _load,
                   color: AppTheme.primary,
                   child: ListView.builder(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     itemCount: _items.length + 1,
-                    itemBuilder: (ctx, i) {
-                      if (i == _items.length) return _buildPagination();
-                      return _buildUserCard(_items[i]);
+                    itemBuilder: (context, index) {
+                      if (index == _items.length) return _pagination();
+                      final user = _items[index];
+                      final name =
+                          '${user['display_name'] ?? user['email'] ?? '-'}';
+                      final email = '${user['email'] ?? '-'}';
+                      final id = _asInt(user['id']);
+                      final balance = _asDouble(user['balance']);
+                      final initials = name.trim().isNotEmpty
+                          ? name.trim().substring(0, 1).toUpperCase()
+                          : '?';
+                      return GestureDetector(
+                        onTap: () => _openUserDetail(user),
+                        child: Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(14),
+                          decoration: AppTheme.glassDecoration(radius: 14),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 42,
+                                height: 42,
+                                decoration: BoxDecoration(
+                                  gradient: const LinearGradient(
+                                      colors: [
+                                        AppTheme.primary,
+                                        AppTheme.accentPink
+                                      ],
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Center(
+                                    child: Text(initials,
+                                        style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w800))),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w700)),
+                                      const SizedBox(height: 2),
+                                      Text(email,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                              fontSize: 11,
+                                              color: AppTheme.textMuted)),
+                                    ]),
+                              ),
+                              Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text('${_moneyFmt.format(balance)} TL',
+                                        style: TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w700,
+                                            color: balance > 0
+                                                ? AppTheme.success
+                                                : AppTheme.textMuted)),
+                                    Text('#$id',
+                                        style: const TextStyle(
+                                            fontSize: 10,
+                                            color: AppTheme.textMuted)),
+                                  ]),
+                              const SizedBox(width: 4),
+                              PopupMenuButton<String>(
+                                icon: const Icon(Icons.more_vert_rounded,
+                                    size: 18, color: AppTheme.textMuted),
+                                color: AppTheme.bgCard,
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12)),
+                                itemBuilder: (_) => const [
+                                  PopupMenuItem(
+                                      value: 'detail', child: Text('Detay')),
+                                  PopupMenuItem(
+                                      value: 'balance', child: Text('Bakiye')),
+                                  PopupMenuItem(
+                                      value: 'block', child: Text('Engelle')),
+                                ],
+                                onSelected: (value) {
+                                  if (value == 'detail') {
+                                    _openUserDetail(user);
+                                  }
+                                  if (value == 'balance') {
+                                    _showBalanceDialog(user);
+                                  }
+                                  if (value == 'block') {
+                                    _blockUser(user);
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
                     },
                   ),
                 ),
@@ -185,401 +367,350 @@ class _UsersTabState extends State<UsersTab> {
     );
   }
 
-  Widget _buildUserCard(dynamic u) {
-    final balance = double.tryParse('${u['balance']}') ?? 0;
-    final name = '${u['display_name'] ?? u['email'] ?? '-'}';
-    final initials = name.isNotEmpty ? name[0].toUpperCase() : '?';
-
-    return GestureDetector(
-      onTap: () => _showUserDetail(u),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.all(14),
-        decoration: AppTheme.glassDecoration(radius: 14),
-        child: Row(
-          children: [
-            // Avatar
-            Container(
-              width: 42, height: 42,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [AppTheme.primary, AppTheme.accentPink],
-                  begin: Alignment.topLeft, end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Center(child: Text(initials, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Colors.white))),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: 2),
-                  Text('${u['email'] ?? '-'}', style: const TextStyle(fontSize: 11, color: AppTheme.textMuted), overflow: TextOverflow.ellipsis),
-                ],
-              ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text('${_fmt.format(balance)} ₺', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: balance > 0 ? AppTheme.success : AppTheme.textMuted)),
-                Text('#${u['id']}', style: const TextStyle(fontSize: 10, color: AppTheme.textMuted)),
-              ],
-            ),
-            const SizedBox(width: 4),
-            PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert_rounded, size: 18, color: AppTheme.textMuted),
-              color: AppTheme.bgCard,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              itemBuilder: (_) => [
-                const PopupMenuItem(value: 'detail', child: Row(children: [Icon(Icons.person, size: 16), SizedBox(width: 8), Text('Detaylar')])),
-                const PopupMenuItem(value: 'balance', child: Row(children: [Icon(Icons.account_balance_wallet, size: 16), SizedBox(width: 8), Text('Bakiye')])),
-                const PopupMenuItem(value: 'block', child: Row(children: [Icon(Icons.block, size: 16, color: AppTheme.error), SizedBox(width: 8), Text('Engelle', style: TextStyle(color: AppTheme.error))])),
-              ],
-              onSelected: (v) {
-                switch (v) {
-                  case 'detail': _showUserDetail(u); break;
-                  case 'balance': _showBalanceDialog(u); break;
-                  case 'block': _blockUser(u); break;
-                }
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _blockUser(dynamic user) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(children: [Icon(Icons.block, color: AppTheme.error, size: 24), SizedBox(width: 8), Text('Kullanıcı Engelle', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700))]),
-        content: Text('${user['display_name'] ?? user['email']} engellenecek. Devam?', style: const TextStyle(color: AppTheme.textSecondary)),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('İptal')),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error), child: const Text('Engelle')),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      try {
-        await AdminApi().blockUser(user['id']);
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Kullanıcı engellendi'), backgroundColor: AppTheme.success));
-        _load();
-      } catch (e) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
-      }
-    }
-  }
-
-  Widget _buildPagination() {
+  Widget _pagination() {
     if (_pages <= 1) return const SizedBox(height: 16);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 16),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          IconButton(icon: const Icon(Icons.chevron_left), onPressed: _page > 1 ? () { _page--; _load(); } : null),
-          Text('$_page / $_pages', style: const TextStyle(color: AppTheme.textMuted)),
-          IconButton(icon: const Icon(Icons.chevron_right), onPressed: _page < _pages ? () { _page++; _load(); } : null),
-        ],
-      ),
+      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        IconButton(
+          onPressed: _page > 1
+              ? () {
+                  setState(() => _page--);
+                  _load();
+                }
+              : null,
+          icon: const Icon(Icons.chevron_left_rounded),
+        ),
+        Text('$_page / $_pages',
+            style: const TextStyle(color: AppTheme.textMuted)),
+        IconButton(
+          onPressed: _page < _pages
+              ? () {
+                  setState(() => _page++);
+                  _load();
+                }
+              : null,
+          icon: const Icon(Icons.chevron_right_rounded),
+        ),
+      ]),
     );
   }
 }
 
-// ═══ User Detail Bottom Sheet ═══
-class _UserDetailSheet extends StatefulWidget {
+class _UserInsightSheet extends StatefulWidget {
   final Map<String, dynamic> user;
-  final ScrollController scrollController;
-  final NumberFormat fmt;
-  final VoidCallback onUpdate;
+  final NumberFormat moneyFmt;
+  final VoidCallback onRefreshParent;
 
-  const _UserDetailSheet({required this.user, required this.scrollController, required this.fmt, required this.onUpdate});
+  const _UserInsightSheet(
+      {required this.user,
+      required this.moneyFmt,
+      required this.onRefreshParent});
 
   @override
-  State<_UserDetailSheet> createState() => _UserDetailSheetState();
+  State<_UserInsightSheet> createState() => _UserInsightSheetState();
 }
 
-class _UserDetailSheetState extends State<_UserDetailSheet> with SingleTickerProviderStateMixin {
-  late TabController _tabCtrl;
-  List<dynamic> _orders = [];
-  List<dynamic> _logs = [];
-  Map<String, dynamic>? _sessions;
-  bool _loadingOrders = false, _loadingLogs = false, _loadingSessions = false;
+class _UserInsightSheetState extends State<_UserInsightSheet>
+    with SingleTickerProviderStateMixin {
+  late TabController _tab;
+  bool _loading = true;
+
+  Map<String, dynamic> _user = {};
+  Map<String, dynamic> _metrics = {};
+  Map<String, dynamic> _security = {};
+  List<Map<String, dynamic>> _orders = [];
+  List<Map<String, dynamic>> _logs = [];
+  List<Map<String, dynamic>> _topServices = [];
+  List<Map<String, dynamic>> _ipSummary = [];
+  List<Map<String, dynamic>> _timeline = [];
+
+  int _asInt(dynamic value, {int fallback = 0}) {
+    if (value is int) return value;
+    if (value is double) return value.round();
+    return int.tryParse('$value') ?? fallback;
+  }
+
+  double _asDouble(dynamic value, {double fallback = 0}) {
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    return double.tryParse('$value') ?? fallback;
+  }
 
   @override
   void initState() {
     super.initState();
-    _tabCtrl = TabController(length: 3, vsync: this);
+    _tab = TabController(length: 6, vsync: this);
+    _load();
   }
 
   @override
-  void dispose() { _tabCtrl.dispose(); super.dispose(); }
+  void dispose() {
+    _tab.dispose();
+    super.dispose();
+  }
 
-  Future<void> _loadOrders() async {
-    if (_orders.isNotEmpty) return;
-    setState(() => _loadingOrders = true);
+  Future<void> _load() async {
+    setState(() => _loading = true);
     try {
-      final d = await AdminApi().getOrders(search: '${widget.user['id']}');
-      setState(() { _orders = d['items'] as List? ?? []; _loadingOrders = false; });
-    } catch (_) {
-      setState(() => _loadingOrders = false);
+      final data = await AdminApi().getUser360(_asInt(widget.user['id']));
+      if (!mounted) return;
+      final merged = Map<String, dynamic>.from(widget.user)
+        ..addAll((data['user'] as Map?)?.cast<String, dynamic>() ?? {});
+      setState(() {
+        _user = merged;
+        _metrics = Map<String, dynamic>.from((data['metrics'] as Map?) ?? {});
+        _security = Map<String, dynamic>.from((data['security'] as Map?) ?? {});
+        _orders = (data['orders'] as List? ?? [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        _logs = (data['logs'] as List? ?? [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        _topServices = (data['top_services'] as List? ?? [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        _ipSummary = (data['ip_summary'] as List? ?? [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        _timeline = (data['timeline'] as List? ?? [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
     }
   }
 
-  Future<void> _loadLogs() async {
-    if (_logs.isNotEmpty) return;
-    setState(() => _loadingLogs = true);
-    try {
-      final d = await AdminApi().getUserLogs(widget.user['id']);
-      setState(() { _logs = d['items'] as List? ?? []; _loadingLogs = false; });
-    } catch (_) {
-      setState(() => _loadingLogs = false);
-    }
+  Color _riskColor(int score) {
+    if (score >= 70) return AppTheme.error;
+    if (score >= 40) return AppTheme.warning;
+    return AppTheme.success;
   }
 
-  Future<void> _loadSessions() async {
-    if (_sessions != null) return;
-    setState(() => _loadingSessions = true);
-    try {
-      final d = await AdminApi().getUserSessions(widget.user['id']);
-      setState(() { _sessions = d; _loadingSessions = false; });
-    } catch (_) {
-      setState(() => _loadingSessions = false);
-    }
+  Widget _empty(String text, IconData icon) {
+    return Center(
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+      Icon(icon, size: 34, color: AppTheme.textMuted),
+      const SizedBox(height: 8),
+      Text(text, style: const TextStyle(color: AppTheme.textMuted))
+    ]));
   }
 
   @override
   Widget build(BuildContext context) {
-    final u = widget.user;
-    final name = '${u['display_name'] ?? u['email'] ?? '-'}';
-    final balance = double.tryParse('${u['balance']}') ?? 0;
+    if (_loading) {
+      return const Center(
+          child: CircularProgressIndicator(color: AppTheme.primary));
+    }
 
-    return ListView(
-      controller: widget.scrollController,
-      padding: const EdgeInsets.all(20),
+    final name = '${_user['display_name'] ?? _user['email'] ?? '-'}';
+    final email = '${_user['email'] ?? '-'}';
+    final id = _asInt(_user['id']);
+    final risk = _asInt(_metrics['risk_score']);
+
+    return Column(
       children: [
-        // ═══ Profile Header ═══
-        Row(children: [
-          Container(
-            width: 56, height: 56,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(colors: [AppTheme.primary, AppTheme.accentPink]),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Center(child: Text(name.isNotEmpty ? name[0].toUpperCase() : '?', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800))),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-                Text('${u['email'] ?? '-'}', style: const TextStyle(fontSize: 12, color: AppTheme.textMuted)),
-                Text('ID: ${u['id']} • Kayıt: ${u['registered'] ?? '-'}', style: const TextStyle(fontSize: 10, color: AppTheme.textMuted)),
-              ],
-            ),
-          ),
-        ]),
-        const SizedBox(height: 16),
-
-        // ═══ Balance Card ═══
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [AppTheme.success.withValues(alpha: 0.08), AppTheme.success.withValues(alpha: 0.02)],
-            ),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: AppTheme.success.withValues(alpha: 0.15)),
-          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
           child: Row(children: [
-            const Icon(Icons.account_balance_wallet_rounded, color: AppTheme.success, size: 24),
-            const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Bakiye', style: TextStyle(fontSize: 11, color: AppTheme.textMuted)),
-                Text('${widget.fmt.format(balance)} ₺', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppTheme.success)),
-              ],
-            ),
+            Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text(name,
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w700)),
+                  Text(email,
+                      style: const TextStyle(
+                          fontSize: 11, color: AppTheme.textMuted)),
+                  Text('ID: $id',
+                      style: const TextStyle(
+                          fontSize: 10, color: AppTheme.textSecondary))
+                ])),
+            Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                    color: _riskColor(risk).withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(999)),
+                child: Text('Risk $risk',
+                    style: TextStyle(
+                        color: _riskColor(risk),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700))),
           ]),
         ),
-        const SizedBox(height: 16),
-
-        // ═══ Quick Actions ═══
-        Row(children: [
-          _actionBtn('Şifre Sıfırla', Icons.lock_reset_rounded, AppTheme.warning, () async {
-            try {
-              await AdminApi().resetUserPassword(u['id']);
-              if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Şifre sıfırlama e-postası gönderildi'), backgroundColor: AppTheme.success));
-            } catch (e) {
-              if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
-            }
-          }),
-          const SizedBox(width: 8),
-          _actionBtn('Engelle', Icons.block_rounded, AppTheme.error, () async {
-            Navigator.pop(context);
-            try {
-              await AdminApi().blockUser(u['id']);
-              if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Kullanıcı engellendi'), backgroundColor: AppTheme.success));
-              widget.onUpdate();
-            } catch (e) {
-              if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
-            }
-          }),
-        ]),
-        const SizedBox(height: 20),
-
-        // ═══ Tabs ═══
         Container(
-          decoration: BoxDecoration(
-            color: AppTheme.glassBg,
-            borderRadius: BorderRadius.circular(12),
-          ),
+          color: AppTheme.bgCard,
           child: TabBar(
-            controller: _tabCtrl,
+            controller: _tab,
+            isScrollable: true,
             labelColor: AppTheme.primary,
             unselectedLabelColor: AppTheme.textMuted,
             indicatorColor: AppTheme.primary,
-            indicatorSize: TabBarIndicatorSize.label,
-            labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-            tabs: const [Tab(text: 'Siparişler'), Tab(text: 'Loglar'), Tab(text: 'Oturumlar')],
-            onTap: (i) {
-              if (i == 0) _loadOrders();
-              if (i == 1) _loadLogs();
-              if (i == 2) _loadSessions();
-            },
+            tabs: const [
+              Tab(text: 'Ozet'),
+              Tab(text: 'Siparisler'),
+              Tab(text: 'Servisler'),
+              Tab(text: 'Aktivite'),
+              Tab(text: 'Guvenlik'),
+              Tab(text: 'Timeline'),
+            ],
           ),
         ),
-        const SizedBox(height: 12),
-        SizedBox(
-          height: 300,
+        Expanded(
           child: TabBarView(
-            controller: _tabCtrl,
-            children: [_buildOrdersTab(), _buildLogsTab(), _buildSessionsTab()],
+            controller: _tab,
+            children: [
+              ListView(padding: const EdgeInsets.all(12), children: [
+                Wrap(spacing: 10, runSpacing: 10, children: [
+                  _mCard(
+                      'Toplam Siparis',
+                      '${_asInt(_metrics['total_orders'], fallback: _orders.length)}',
+                      Icons.receipt_long_rounded,
+                      AppTheme.info),
+                  _mCard(
+                      'Toplam Harcama',
+                      '${widget.moneyFmt.format(_asDouble(_metrics['total_spent']))} TL',
+                      Icons.attach_money_rounded,
+                      AppTheme.success),
+                  _mCard(
+                      'Benzersiz IP',
+                      '${_asInt(_metrics['unique_ips'], fallback: _ipSummary.length)}',
+                      Icons.language_rounded,
+                      AppTheme.warning),
+                  _mCard(
+                      'Failed Login',
+                      '${_asInt(_security['failed_logins'])}',
+                      Icons.key_off_rounded,
+                      AppTheme.error),
+                ]),
+              ]),
+              _orders.isEmpty
+                  ? _empty('Siparis bulunamadi', Icons.receipt_long_rounded)
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: _orders.length,
+                      itemBuilder: (_, i) {
+                        final o = _orders[i];
+                        return Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.all(12),
+                            decoration: AppTheme.glassDecoration(radius: 12),
+                            child: Text(
+                                '#${o['id']}  ${o['service_name']}  ${o['status']}  ${widget.moneyFmt.format(_asDouble(o['amount']))} TL',
+                                style: const TextStyle(fontSize: 11)));
+                      },
+                    ),
+              _topServices.isEmpty
+                  ? _empty('Servis kullanim verisi yok',
+                      Icons.design_services_rounded)
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: _topServices.length,
+                      itemBuilder: (_, i) {
+                        final s = _topServices[i];
+                        return Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.all(12),
+                            decoration: AppTheme.glassDecoration(radius: 12),
+                            child: Text(
+                                '${i + 1}. ${s['service_name']}  -  ${s['count']} adet  -  ${widget.moneyFmt.format(_asDouble(s['total_amount']))} TL',
+                                style: const TextStyle(fontSize: 11)));
+                      },
+                    ),
+              _logs.isEmpty
+                  ? _empty('Aktivite logu yok', Icons.history_rounded)
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: _logs.length,
+                      itemBuilder: (_, i) {
+                        final l = _logs[i];
+                        return Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.all(12),
+                            decoration: AppTheme.glassDecoration(radius: 12),
+                            child: Text(
+                                '${l['date']}  ${l['action']}\n${l['message']}',
+                                style: const TextStyle(
+                                    fontSize: 11,
+                                    color: AppTheme.textSecondary)));
+                      },
+                    ),
+              ListView(
+                padding: const EdgeInsets.all(12),
+                children: [
+                  Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: AppTheme.glassDecoration(radius: 12),
+                      child: Text(
+                          'Failed login: ${_asInt(_security['failed_logins'])}  |  Block sinyali: ${_asInt(_security['blocked_signals'])}  |  Benzersiz IP: ${_asInt(_security['unique_ips'], fallback: _ipSummary.length)}',
+                          style: const TextStyle(fontSize: 11))),
+                  const SizedBox(height: 8),
+                  if (_ipSummary.isEmpty)
+                    const Text('IP gecmisi yok',
+                        style: TextStyle(color: AppTheme.textMuted))
+                  else
+                    ..._ipSummary.map((ip) => Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(12),
+                        decoration: AppTheme.glassDecoration(radius: 12),
+                        child: Text(
+                            '${ip['ip']}  -  ${ip['count']} kez  -  Son: ${ip['last_seen']}',
+                            style: const TextStyle(fontSize: 11)))),
+                ],
+              ),
+              _timeline.isEmpty
+                  ? _empty('Timeline yok', Icons.timeline_rounded)
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: _timeline.length,
+                      itemBuilder: (_, i) {
+                        final t = _timeline[i];
+                        return Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.all(12),
+                            decoration: AppTheme.glassDecoration(radius: 12),
+                            child: Text(
+                                '${t['date']}  ${t['title']}\n${t['message']}',
+                                style: const TextStyle(
+                                    fontSize: 11,
+                                    color: AppTheme.textSecondary)));
+                      },
+                    ),
+            ],
           ),
         ),
       ],
     );
   }
 
-  Widget _actionBtn(String label, IconData icon, Color color, VoidCallback onTap) {
-    return Expanded(
-      child: OutlinedButton.icon(
-        onPressed: onTap,
-        icon: Icon(icon, size: 16),
-        label: Text(label, style: const TextStyle(fontSize: 12)),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: color,
-          side: BorderSide(color: color.withValues(alpha: 0.3)),
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOrdersTab() {
-    if (_loadingOrders) return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
-    if (_orders.isEmpty) return _emptyState('Sipariş bulunamadı', Icons.shopping_bag_rounded);
-    return ListView.builder(
-      itemCount: _orders.length,
-      itemBuilder: (ctx, i) {
-        final o = _orders[i];
-        return Container(
-          margin: const EdgeInsets.only(bottom: 6),
-          padding: const EdgeInsets.all(10),
-          decoration: AppTheme.glassDecoration(radius: 10),
-          child: Row(children: [
-            Text('#${o['id']}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppTheme.primary)),
-            const SizedBox(width: 8),
-            Expanded(child: Text('${o['service_name'] ?? '-'}', style: const TextStyle(fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis)),
-            Text('${o['status']}', style: TextStyle(fontSize: 10, color: AppTheme.statusColor('${o['status']}'), fontWeight: FontWeight.w600)),
-          ]),
-        );
-      },
-    );
-  }
-
-  Widget _buildLogsTab() {
-    if (_loadingLogs) return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
-    if (_logs.isEmpty) return _emptyState('Log bulunamadı', Icons.history_rounded);
-    return ListView.builder(
-      itemCount: _logs.length,
-      itemBuilder: (ctx, i) {
-        final l = _logs[i];
-        return Container(
-          margin: const EdgeInsets.only(bottom: 6),
-          padding: const EdgeInsets.all(10),
-          decoration: AppTheme.glassDecoration(radius: 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('${l['action'] ?? '-'}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 2),
-              Text('${l['date'] ?? '-'}', style: const TextStyle(fontSize: 10, color: AppTheme.textMuted)),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildSessionsTab() {
-    if (_loadingSessions) return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
-    if (_sessions == null) {
-      return Center(
-        child: ElevatedButton.icon(
-          onPressed: _loadSessions,
-          icon: const Icon(Icons.download, size: 16),
-          label: const Text('Oturumları Yükle'),
-        ),
-      );
-    }
-    final sessions = (_sessions?['items'] as List?) ?? [];
-    if (sessions.isEmpty) return _emptyState('Oturum bulunamadı', Icons.devices_rounded);
-    return ListView.builder(
-      itemCount: sessions.length,
-      itemBuilder: (ctx, i) {
-        final s = sessions[i];
-        return Container(
-          margin: const EdgeInsets.only(bottom: 6),
-          padding: const EdgeInsets.all(10),
-          decoration: AppTheme.glassDecoration(radius: 10),
-          child: Row(children: [
-            const Icon(Icons.computer_rounded, size: 16, color: AppTheme.textMuted),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('${s['ip'] ?? '-'}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                  Text('${s['browser'] ?? '-'} • ${s['date'] ?? '-'}', style: const TextStyle(fontSize: 10, color: AppTheme.textMuted)),
-                ],
-              ),
-            ),
-          ]),
-        );
-      },
-    );
-  }
-
-  Widget _emptyState(String text, IconData icon) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 36, color: AppTheme.textMuted),
+  Widget _mCard(String label, String value, IconData icon, Color color) {
+    return SizedBox(
+      width: 158,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: AppTheme.glassDecoration(radius: 12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(icon, size: 16, color: color),
           const SizedBox(height: 8),
-          Text(text, style: const TextStyle(color: AppTheme.textMuted, fontSize: 13)),
-        ],
+          Text(value,
+              style:
+                  const TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 2),
+          Text(label,
+              style: const TextStyle(fontSize: 10, color: AppTheme.textMuted)),
+        ]),
       ),
     );
   }
