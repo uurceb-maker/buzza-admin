@@ -10,13 +10,13 @@
       - name: Get dependencies
         script: flutter pub get
 
+      - name: Generate Flutter xcconfig (no build)
+        script: flutter build ios --config-only --release --no-codesign
+
       - name: Install CocoaPods
         script: |
           cd ios
           pod install
-
-      - name: Generate Flutter xcconfig (no build)
-        script: flutter build ios --config-only --release --no-codesign
 
       - name: Build with xcodebuild (unsigned)
         script: |
