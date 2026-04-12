@@ -3,8 +3,9 @@ import 'package:provider/provider.dart';
 
 import '../config/theme.dart';
 import '../providers/auth_provider.dart';
+import '../services/support_notification_service.dart';
+import 'katalog_screen.dart';
 import 'login_screen.dart';
-import 'tabs/categories_tab.dart';
 import 'tabs/dashboard_tab.dart';
 import 'tabs/notifications_campaign_tab.dart';
 import 'tabs/orders_tab.dart';
@@ -24,13 +25,18 @@ class AdminShell extends StatefulWidget {
 
 class _AdminShellState extends State<AdminShell> {
   int _currentIndex = 0;
+  final GlobalKey<KatalogScreenState> _katalogKey =
+      GlobalKey<KatalogScreenState>();
+
+  // Bildirim paneli overlay
+  OverlayEntry? _notifOverlay;
 
   static const _tabs = [
     _TabInfo(icon: Icons.dashboard_rounded, label: 'Dashboard'),
     _TabInfo(icon: Icons.design_services_rounded, label: 'Servisler'),
     _TabInfo(icon: Icons.campaign_rounded, label: 'Bildirim ve Kampanyalar'),
     _TabInfo(icon: Icons.settings_rounded, label: 'Ayarlar'),
-    _TabInfo(icon: Icons.category_rounded, label: 'Kategoriler'),
+    _TabInfo(icon: Icons.grid_view_rounded, label: 'Katalog'),
     _TabInfo(icon: Icons.inventory_2_rounded, label: 'Siparişler'),
     _TabInfo(icon: Icons.people_rounded, label: 'Kullanıcılar'),
     _TabInfo(icon: Icons.payment_rounded, label: 'Ödemeler'),
@@ -38,17 +44,17 @@ class _AdminShellState extends State<AdminShell> {
     _TabInfo(icon: Icons.shield_rounded, label: 'Güvenlik'),
   ];
 
-  final _pages = const [
-    DashboardTab(),
-    ServicesTab(),
-    NotificationsCampaignTab(),
-    SettingsTab(),
-    CategoriesTab(),
-    OrdersTab(),
-    UsersTab(),
-    PaymentsTab(),
-    SupportTab(),
-    SecurityTab(),
+  late final List<Widget> _pages = [
+    const DashboardTab(),
+    const ServicesTab(),
+    const NotificationsCampaignTab(),
+    const SettingsTab(),
+    KatalogScreen(key: _katalogKey),
+    const OrdersTab(),
+    const UsersTab(),
+    const PaymentsTab(),
+    const SupportTab(),
+    const SecurityTab(),
   ];
 
   bool _isDesktop(BuildContext context) =>
@@ -72,12 +78,74 @@ class _AdminShellState extends State<AdminShell> {
 
   void _switchTab(int index) {
     setState(() => _currentIndex = index);
+    // Destek sekmesine geçince okunmamış sayısını sıfırla
+    // ve sistem bildirimlerini bastır (tab kendi bildirimini yapıyor)
+    final notifService = SupportNotificationService.instance;
+    notifService.supportTabActive = index == 8;
+    if (index == 8) {
+      notifService.unreadCount.value = 0;
+    }
+    _closeNotifPanel();
     if (Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
     }
   }
 
+  void _toggleNotifPanel() {
+    if (_notifOverlay != null) {
+      _closeNotifPanel();
+    } else {
+      _openNotifPanel();
+    }
+  }
+
+  void _closeNotifPanel() {
+    _notifOverlay?.remove();
+    _notifOverlay = null;
+  }
+
+  void _openNotifPanel() {
+    final overlay = Overlay.of(context);
+    final appBarHeight = kToolbarHeight + MediaQuery.of(context).padding.top;
+    final panelWidth =
+        (MediaQuery.sizeOf(context).width * 0.75).clamp(200.0, 300.0);
+
+    _notifOverlay = OverlayEntry(
+      builder: (_) {
+        return Stack(
+          children: [
+            // Barrier — dışa tıklayınca kapan
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: _closeNotifPanel,
+                behavior: HitTestBehavior.opaque,
+                child: Container(color: Colors.transparent),
+              ),
+            ),
+            // Panel
+            Positioned(
+              top: appBarHeight,
+              left: 0,
+              width: panelWidth,
+              child: Material(
+                color: Colors.transparent,
+                child: _NotifPanel(
+                  onGoSupport: () {
+                    _closeNotifPanel();
+                    _switchTab(8);
+                  },
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    overlay.insert(_notifOverlay!);
+  }
+
   Future<void> _logout() async {
+    _closeNotifPanel();
     final auth = Provider.of<AuthProvider>(context, listen: false);
     await auth.logout();
     if (!mounted) return;
@@ -167,6 +235,12 @@ class _AdminShellState extends State<AdminShell> {
   }
 
   PreferredSizeWidget _buildAppBar(bool isDesktop, int currentIndex) {
+    final catalogColors = context.catalogColors;
+    final isCatalogTab = _tabs[currentIndex].label == 'Katalog';
+    final liveColor =
+        isCatalogTab ? catalogColors.activeGreen : AppTheme.success;
+    final refreshColor = isCatalogTab ? catalogColors.accentBlue : Colors.white;
+
     return AppBar(
       titleSpacing: isDesktop ? 22 : 6,
       title: Row(
@@ -195,30 +269,81 @@ class _AdminShellState extends State<AdminShell> {
         ],
       ),
       actions: [
+        // ─── Bildirim çan butonu ───
+        ValueListenableBuilder<int>(
+          valueListenable:
+              SupportNotificationService.instance.unreadCount,
+          builder: (context, count, _) {
+            return IconButton(
+              tooltip: 'Destek Bildirimleri',
+              onPressed: _toggleNotifPanel,
+              icon: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  const Icon(Icons.notifications_rounded,
+                      size: 22, color: Colors.white),
+                  if (count > 0)
+                    Positioned(
+                      right: -4,
+                      top: -4,
+                      child: Container(
+                        height: 16,
+                        constraints:
+                            const BoxConstraints(minWidth: 16),
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 3),
+                        decoration: BoxDecoration(
+                          color: AppTheme.error,
+                          borderRadius: BorderRadius.circular(99),
+                          border: Border.all(
+                              color: AppTheme.bgDark, width: 1.5),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          count > 9 ? '9+' : '$count',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            );
+          },
+        ),
         Container(
           margin: const EdgeInsets.only(right: 6),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
-            color: AppTheme.success.withValues(alpha: 0.14),
+            color: liveColor.withValues(alpha: 0.14),
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: AppTheme.success.withValues(alpha: 0.3)),
+            border: Border.all(color: liveColor.withValues(alpha: 0.3)),
           ),
-          child: const Row(
+          child: Row(
             children: [
-              Icon(Icons.circle, color: AppTheme.success, size: 8),
-              SizedBox(width: 6),
+              Icon(Icons.circle, color: liveColor, size: 8),
+              const SizedBox(width: 6),
               Text('Canlı',
                   style: TextStyle(
                       fontSize: 11,
-                      color: AppTheme.success,
+                      color: liveColor,
                       fontWeight: FontWeight.w700)),
             ],
           ),
         ),
         IconButton(
           tooltip: 'Yenile',
-          icon: const Icon(Icons.refresh_rounded, size: 21),
-          onPressed: () => setState(() {}),
+          icon: Icon(Icons.refresh_rounded, size: 21, color: refreshColor),
+          onPressed: () {
+            if (isCatalogTab) {
+              _katalogKey.currentState?.refreshMockData();
+              return;
+            }
+            setState(() {});
+          },
         ),
         const SizedBox(width: 8),
       ],
@@ -567,6 +692,209 @@ class _BackdropOrb extends StatelessWidget {
               spreadRadius: 30,
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Bildirim Paneli (Soldan Kayan Overlay) ──────────────────────────────────
+class _NotifPanel extends StatefulWidget {
+  final VoidCallback onGoSupport;
+
+  const _NotifPanel({required this.onGoSupport});
+
+  @override
+  State<_NotifPanel> createState() => _NotifPanelState();
+}
+
+class _NotifPanelState extends State<_NotifPanel>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<Offset> _slide;
+  late final Animation<double> _fade;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 260),
+    )..forward();
+    _slide = Tween<Offset>(begin: const Offset(-1, 0), end: Offset.zero)
+        .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
+    _fade = CurvedAnimation(parent: _ctrl, curve: Curves.easeOut);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SlideTransition(
+      position: _slide,
+      child: FadeTransition(
+        opacity: _fade,
+        child: Container(
+          margin: const EdgeInsets.only(left: 8, right: 8, top: 6),
+          decoration: BoxDecoration(
+            color: AppTheme.bgSurface,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: AppTheme.glassBorder),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.35),
+                blurRadius: 24,
+                offset: const Offset(4, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Başlık
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      AppTheme.primary.withValues(alpha: 0.18),
+                      AppTheme.accentPink.withValues(alpha: 0.08),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(18),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.notifications_rounded,
+                        size: 18, color: AppTheme.primaryLight),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'Destek Bildirimleri',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    ValueListenableBuilder<int>(
+                      valueListenable:
+                          SupportNotificationService.instance.unreadCount,
+                      builder: (_, count, __) => count > 0
+                          ? Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 7, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: AppTheme.error,
+                                borderRadius: BorderRadius.circular(99),
+                              ),
+                              child: Text(
+                                count > 9 ? '9+' : '$count',
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                  ],
+                ),
+              ),
+              // İçerik
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: ValueListenableBuilder<int>(
+                  valueListenable:
+                      SupportNotificationService.instance.unreadCount,
+                  builder: (_, count, __) => count > 0
+                      ? Row(
+                          children: [
+                            Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                color: AppTheme.warning.withValues(alpha: 0.14),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(
+                                Icons.chat_bubble_rounded,
+                                color: AppTheme.warning,
+                                size: 18,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '$count okunmamış mesaj',
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  const Text(
+                                    'Bekleyen destek talepleri var',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: AppTheme.textMuted,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        )
+                      : const Row(
+                          children: [
+                            Icon(Icons.check_circle_rounded,
+                                color: AppTheme.success, size: 20),
+                            SizedBox(width: 10),
+                            Text(
+                              'Tüm mesajlar okundu',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: AppTheme.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              ),
+              // Buton
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: widget.onGoSupport,
+                    icon: const Icon(Icons.chat_bubble_rounded, size: 16),
+                    label: const Text('Destek Sekmesine Git'),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      textStyle: const TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

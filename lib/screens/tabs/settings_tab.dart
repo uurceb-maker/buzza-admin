@@ -38,22 +38,25 @@ class _SettingsTabState extends State<SettingsTab>
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() => _loading = true);
     try {
       final d = await AdminApi().getSettings();
+      if (!mounted) return;
       setState(() {
         _settings = d;
         _loading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _loading = false);
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
     }
   }
 
   Future<void> _save() async {
+    if (!mounted) return;
     setState(() => _saving = true);
     try {
       await AdminApi().saveSettings(_settings);
@@ -66,18 +69,22 @@ class _SettingsTabState extends State<SettingsTab>
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
     }
+    if (!mounted) return;
     setState(() => _saving = false);
   }
 
   Future<void> _loadErrorLog() async {
+    if (!mounted) return;
     setState(() => _logLoading = true);
     try {
       final d = await AdminApi().getErrorLog();
+      if (!mounted) return;
       setState(() {
         _errorLog = d['content'] ?? 'Boş';
         _logLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _errorLog = 'Hata: $e';
         _logLoading = false;
@@ -675,3 +682,4 @@ class _SettingsTabState extends State<SettingsTab>
     );
   }
 }
+

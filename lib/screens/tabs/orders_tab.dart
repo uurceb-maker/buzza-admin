@@ -23,9 +23,11 @@ class _OrdersTabState extends State<OrdersTab> {
   void initState() { super.initState(); _load(); }
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() => _loading = true);
     try {
       final d = await AdminApi().getOrders(page: _page, status: _status, search: _search);
+      if (!mounted) return;
       setState(() {
         _items = d['items'] as List? ?? [];
         _total = d['total'] ?? 0;
@@ -33,8 +35,9 @@ class _OrdersTabState extends State<OrdersTab> {
         _loading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _loading = false);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
     }
   }
 

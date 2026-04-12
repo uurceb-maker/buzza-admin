@@ -1,5 +1,68 @@
 import 'package:flutter/material.dart';
 
+@immutable
+class CatalogThemeColors extends ThemeExtension<CatalogThemeColors> {
+  final Color background;
+  final Color card;
+  final Color accentBlue;
+  final Color activeGreen;
+  final Color passiveRed;
+  final Color repairOrange;
+
+  const CatalogThemeColors({
+    required this.background,
+    required this.card,
+    required this.accentBlue,
+    required this.activeGreen,
+    required this.passiveRed,
+    required this.repairOrange,
+  });
+
+  @override
+  CatalogThemeColors copyWith({
+    Color? background,
+    Color? card,
+    Color? accentBlue,
+    Color? activeGreen,
+    Color? passiveRed,
+    Color? repairOrange,
+  }) {
+    return CatalogThemeColors(
+      background: background ?? this.background,
+      card: card ?? this.card,
+      accentBlue: accentBlue ?? this.accentBlue,
+      activeGreen: activeGreen ?? this.activeGreen,
+      passiveRed: passiveRed ?? this.passiveRed,
+      repairOrange: repairOrange ?? this.repairOrange,
+    );
+  }
+
+  @override
+  CatalogThemeColors lerp(
+    ThemeExtension<CatalogThemeColors>? other,
+    double t,
+  ) {
+    if (other is! CatalogThemeColors) {
+      return this;
+    }
+
+    return CatalogThemeColors(
+      background: Color.lerp(background, other.background, t) ?? background,
+      card: Color.lerp(card, other.card, t) ?? card,
+      accentBlue: Color.lerp(accentBlue, other.accentBlue, t) ?? accentBlue,
+      activeGreen: Color.lerp(activeGreen, other.activeGreen, t) ?? activeGreen,
+      passiveRed: Color.lerp(passiveRed, other.passiveRed, t) ?? passiveRed,
+      repairOrange:
+          Color.lerp(repairOrange, other.repairOrange, t) ?? repairOrange,
+    );
+  }
+}
+
+extension CatalogThemeContext on BuildContext {
+  CatalogThemeColors get catalogColors =>
+      Theme.of(this).extension<CatalogThemeColors>()!;
+}
+
 class AppTheme {
   // Primary palette
   static const Color primary = Color(0xFF0EA5E9);
@@ -322,6 +385,16 @@ class AppTheme {
         unselectedLabelStyle:
             TextStyle(fontSize: 10, fontWeight: FontWeight.w500),
       ),
+      extensions: const <ThemeExtension<dynamic>>[
+        CatalogThemeColors(
+          background: Color(0xFF0F1623),
+          card: Color(0xFF1A2436),
+          accentBlue: Color(0xFF5BAEFF),
+          activeGreen: Color(0xFF1D9E75),
+          passiveRed: Color(0xFFE24B4A),
+          repairOrange: Color(0xFFF59E0B),
+        ),
+      ],
     );
   }
 }

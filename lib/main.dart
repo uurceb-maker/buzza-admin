@@ -6,10 +6,19 @@ import 'config/theme.dart';
 import 'providers/auth_provider.dart';
 import 'screens/admin_shell.dart';
 import 'screens/login_screen.dart';
+import 'services/support_notification_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('tr_TR');
+
+  // Destek bildirimleri arka plan servisi başlat
+  try {
+    await SupportNotificationService.instance.initialize();
+  } catch (_) {
+    // Başlatma hatası uygulamayı durdurmasın
+  }
+
   runApp(const BuzzaAdminApp());
 }
 

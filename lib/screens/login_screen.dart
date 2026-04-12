@@ -6,6 +6,7 @@ import '../config/theme.dart';
 import '../providers/auth_provider.dart';
 import '../widgets/glass_box.dart';
 import 'admin_shell.dart';
+import 'otp_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -88,6 +89,34 @@ class _LoginScreenState extends State<LoginScreen>
               FadeTransition(opacity: animation, child: child),
         ),
       );
+    } on OtpRequiredException catch (otp) {
+      if (!mounted) return;
+      // OTP doğrulama ekranına yönlendir
+      final result = await Navigator.push<bool>(
+        context,
+        PageRouteBuilder(
+          pageBuilder: (_, __, ___) => OtpScreen(
+            otpRedirectUrl: otp.otpRedirectUrl,
+            sessionToken: otp.sessionToken,
+            siteUrl: _urlCtrl.text.trim(),
+          ),
+          transitionDuration: const Duration(milliseconds: 350),
+          transitionsBuilder: (_, animation, __, child) =>
+              FadeTransition(opacity: animation, child: child),
+        ),
+      );
+      // OTP başarılıysa AdminShell'e yönlendir (OtpScreen kendi içinde halleder)
+      if (result == true && mounted) {
+        Navigator.pushReplacement(
+          context,
+          PageRouteBuilder(
+            pageBuilder: (_, __, ___) => const AdminShell(),
+            transitionDuration: const Duration(milliseconds: 350),
+            transitionsBuilder: (_, animation, __, child) =>
+                FadeTransition(opacity: animation, child: child),
+          ),
+        );
+      }
     } catch (e) {
       setState(() => _error = _normalizeErrorMessage(e));
     }

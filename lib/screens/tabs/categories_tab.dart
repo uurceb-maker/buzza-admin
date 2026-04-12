@@ -24,6 +24,7 @@ class _CategoriesTabState extends State<CategoriesTab> {
   void initState() { super.initState(); _load(); }
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() => _loading = true);
     try {
       final d = await AdminApi().getCategories();
@@ -31,10 +32,12 @@ class _CategoriesTabState extends State<CategoriesTab> {
           .whereType<Map>()
           .map((item) => Map<String, dynamic>.from(item))
           .toList();
+      if (!mounted) return;
       setState(() { _items = list; _loading = false; });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _loading = false);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
     }
   }
 

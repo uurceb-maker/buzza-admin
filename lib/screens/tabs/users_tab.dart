@@ -424,6 +424,7 @@ class _UserInsightSheetState extends State<_UserInsightSheet>
   List<Map<String, dynamic>> _topServices = [];
   List<Map<String, dynamic>> _ipSummary = [];
   List<Map<String, dynamic>> _timeline = [];
+  List<Map<String, dynamic>> _balanceLogs = [];
 
   int _asInt(dynamic value, {int fallback = 0}) {
     if (value is int) return value;
@@ -440,7 +441,7 @@ class _UserInsightSheetState extends State<_UserInsightSheet>
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 6, vsync: this);
+    _tab = TabController(length: 7, vsync: this);
     _load();
   }
 
@@ -478,6 +479,10 @@ class _UserInsightSheetState extends State<_UserInsightSheet>
             .map((e) => Map<String, dynamic>.from(e))
             .toList();
         _timeline = (data['timeline'] as List? ?? [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        _balanceLogs = (data['balance_logs'] as List? ?? [])
             .whereType<Map>()
             .map((e) => Map<String, dynamic>.from(e))
             .toList();
@@ -565,6 +570,7 @@ class _UserInsightSheetState extends State<_UserInsightSheet>
               Tab(text: 'Aktivite'),
               Tab(text: 'Guvenlik'),
               Tab(text: 'Timeline'),
+              Tab(text: 'Bakiye'),
             ],
           ),
         ),
@@ -686,6 +692,75 @@ class _UserInsightSheetState extends State<_UserInsightSheet>
                                 style: const TextStyle(
                                     fontSize: 11,
                                     color: AppTheme.textSecondary)));
+                      },
+                    ),
+              // ── BAKİYE GEÇMİŞİ SEKMESİ ──
+              _balanceLogs.isEmpty
+                  ? _empty('Bakiye islemi bulunamadi',
+                      Icons.account_balance_wallet_rounded)
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: _balanceLogs.length,
+                      itemBuilder: (_, i) {
+                        final bl = _balanceLogs[i];
+                        final type = '${bl['type'] ?? ''}'.toLowerCase();
+                        final isAdd = type == 'add' ||
+                            type == 'bonus' ||
+                            type == 'credit' ||
+                            type == 'deposit';
+                        final color =
+                            isAdd ? AppTheme.success : AppTheme.error;
+                        final icon = isAdd
+                            ? Icons.add_circle_outline_rounded
+                            : Icons.remove_circle_outline_rounded;
+                        final amount =
+                            _asDouble(bl['amount']);
+                        final desc =
+                            '${bl['description'] ?? ''}'.isEmpty
+                                ? (isAdd ? 'Bonus Eklendi' : 'Bakiye Dusuruldu')
+                                : '${bl['description']}';
+                        final before =
+                            _asDouble(bl['balance_before']);
+                        final after =
+                            _asDouble(bl['balance_after']);
+                        final date = '${bl['created_at'] ?? ''}';
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(12),
+                          decoration: AppTheme.glassDecoration(radius: 12),
+                          child: Row(children: [
+                            Icon(icon, size: 18, color: color),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Text(desc,
+                                        style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600)),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                        'Oncesi: ${widget.moneyFmt.format(before)} TL  →  Sonrasi: ${widget.moneyFmt.format(after)} TL',
+                                        style: const TextStyle(
+                                            fontSize: 10,
+                                            color: AppTheme.textMuted)),
+                                    if (date.isNotEmpty)
+                                      Text(date,
+                                          style: const TextStyle(
+                                              fontSize: 10,
+                                              color: AppTheme.textMuted)),
+                                  ]),
+                            ),
+                            Text(
+                                '${isAdd ? '+' : '-'}${widget.moneyFmt.format(amount)} TL',
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: color)),
+                          ]),
+                        );
                       },
                     ),
             ],

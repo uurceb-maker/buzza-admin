@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../config/constants.dart';
+import 'catalog_sorter.dart';
 
 class AdminApi {
   static final AdminApi _instance = AdminApi._internal();
@@ -369,6 +370,13 @@ class AdminApi {
 
   bool _looksLikeRouteMessage(String message) {
     final text = _normalizeMatchText(message);
+    final hasRouteHint = text.contains('route') ||
+        text.contains('yol') ||
+        text.contains('endpoint');
+    final hasNotFound = text.contains('not found') ||
+        text.contains('bulunamadi') ||
+        text.contains('bulunmuyor');
+
     return text.contains('rest_no_route') ||
         text.contains('rest_invalid_handler') ||
         text.contains('no route') ||
@@ -376,9 +384,8 @@ class AdminApi {
         text.contains('eslesen yol bulunamadi') ||
         text.contains('istek yontemi ve baglantiyla eslesen yol bulunamadi') ||
         text.contains('yol isleyicisi gecersiz') ||
-        text.contains('undefined method') ||
-        text.contains('not found') ||
-        text.contains('endpoint bulunamadi');
+        text.contains('endpoint bulunamadi') ||
+        (hasRouteHint && hasNotFound);
   }
 
   bool _looksLikeRouteError(Map<String, dynamic> data) {
@@ -538,6 +545,188 @@ class AdminApi {
       return false;
     }
     return null;
+  }
+
+  int _readPersistedSortValue(Map<String, dynamic> item, List<String> keys) {
+    for (final String key in keys) {
+      final int? value = _asNullableInt(item[key]);
+      if (value != null && value > 0) {
+        return value;
+      }
+    }
+    return 0;
+  }
+
+  bool _allHavePersistedSort(
+    Iterable<Map<String, dynamic>> items,
+    List<String> keys,
+  ) {
+    var hasAny = false;
+    for (final Map<String, dynamic> item in items) {
+      hasAny = true;
+      if (_readPersistedSortValue(item, keys) <= 0) {
+        return false;
+      }
+    }
+    return hasAny;
+  }
+
+  int _compareDisplayName(
+      Map<String, dynamic> left, Map<String, dynamic> right) {
+    final String leftName = CatalogSorter.normalizeText(
+      '${left['name_override'] ?? left['name'] ?? left['ad'] ?? ''}',
+    );
+    final String rightName = CatalogSorter.normalizeText(
+      '${right['name_override'] ?? right['name'] ?? right['ad'] ?? ''}',
+    );
+    final int nameCompare = leftName.compareTo(rightName);
+    if (nameCompare != 0) return nameCompare;
+    return _asInt(left['id']).compareTo(_asInt(right['id']));
+  }
+
+  List<Map<String, dynamic>> _sortCategoriesForDisplay(
+    List<Map<String, dynamic>> items,
+  ) {
+    final List<Map<String, dynamic>> sorted = items
+        .map((Map<String, dynamic> item) => Map<String, dynamic>.from(item))
+        .toList();
+
+    if (_allHavePersistedSort(
+        sorted, const <String>['sort_order', 'category_sort'])) {
+      sorted.sort((Map<String, dynamic> left, Map<String, dynamic> right) {
+        final int sortCompare = _readPersistedSortValue(
+          left,
+          const <String>['sort_order', 'category_sort'],
+        ).compareTo(
+          _readPersistedSortValue(
+            right,
+            const <String>['sort_order', 'category_sort'],
+          ),
+        );
+        if (sortCompare != 0) return sortCompare;
+        return _compareDisplayName(left, right);
+      });
+      return sorted;
+    }
+
+    return CatalogSorter.sortCategoryMaps(sorted);
+  }
+
+  List<Map<String, dynamic>> _deriveCategoriesFromServices(
+    List<Map<String, dynamic>> items,
+  ) {
+    final Map<int, Map<String, dynamic>> derived =
+        <int, Map<String, dynamic>>{};
+    for (final Map<String, dynamic> item in items) {
+      final int categoryId = _asInt(item['category_id'] ?? item['categoryId']);
+      if (categoryId <= 0 || derived.containsKey(categoryId)) continue;
+      final String name =
+          '${item['category_name'] ?? item['categoryName'] ?? item['category'] ?? ''}'
+              .trim();
+      derived[categoryId] = <String, dynamic>{
+        'id': categoryId,
+        'name': name,
+      };
+    }
+    return derived.values.toList();
+  }
+
+  Map<int, int> _buildCategoryRankMap(
+    List<Map<String, dynamic>> categories,
+    List<Map<String, dynamic>> services,
+  ) {
+    final List<Map<String, dynamic>> baseCategories = categories.isNotEmpty
+        ? categories
+        : _deriveCategoriesFromServices(services);
+    if (baseCategories.isEmpty) return const <int, int>{};
+
+    final List<Map<String, dynamic>> orderedCategories =
+        _sortCategoriesForDisplay(baseCategories);
+    final Map<int, int> ranks = <int, int>{};
+    for (var index = 0; index < orderedCategories.length; index++) {
+      final int id = _asInt(orderedCategories[index]['id']);
+      if (id > 0) {
+        ranks[id] = index + 1;
+      }
+    }
+    return ranks;
+  }
+
+  int _distinctServiceCategoryCount(List<Map<String, dynamic>> items) {
+    final Set<int> categoryIds = <int>{};
+    for (final Map<String, dynamic> item in items) {
+      final int categoryId = _asInt(item['category_id'] ?? item['categoryId']);
+      if (categoryId > 0) {
+        categoryIds.add(categoryId);
+      }
+    }
+    return categoryIds.length;
+  }
+
+  List<Map<String, dynamic>> _sortServicesForDisplay(
+    List<Map<String, dynamic>> items, {
+    List<Map<String, dynamic>> categories = const <Map<String, dynamic>>[],
+    bool categoryScoped = false,
+  }) {
+    final List<Map<String, dynamic>> sorted = items
+        .map((Map<String, dynamic> item) => Map<String, dynamic>.from(item))
+        .toList();
+    if (sorted.isEmpty) return sorted;
+
+    final bool hasPersistedServiceSort = _allHavePersistedSort(
+        sorted, const <String>['sort_order', 'service_sort']);
+    final bool isSingleCategory =
+        categoryScoped || _distinctServiceCategoryCount(sorted) <= 1;
+
+    if (hasPersistedServiceSort && isSingleCategory) {
+      sorted.sort((Map<String, dynamic> left, Map<String, dynamic> right) {
+        final int sortCompare = _readPersistedSortValue(
+          left,
+          const <String>['sort_order', 'service_sort'],
+        ).compareTo(
+          _readPersistedSortValue(
+            right,
+            const <String>['sort_order', 'service_sort'],
+          ),
+        );
+        if (sortCompare != 0) return sortCompare;
+        return _compareDisplayName(left, right);
+      });
+      return sorted;
+    }
+
+    if (hasPersistedServiceSort) {
+      final Map<int, int> categoryRanks =
+          _buildCategoryRankMap(categories, sorted);
+      if (categoryRanks.isNotEmpty) {
+        sorted.sort((Map<String, dynamic> left, Map<String, dynamic> right) {
+          final int leftCategoryRank = categoryRanks[
+                  _asInt(left['category_id'] ?? left['categoryId'])] ??
+              999999;
+          final int rightCategoryRank = categoryRanks[
+                  _asInt(right['category_id'] ?? right['categoryId'])] ??
+              999999;
+          final int categoryCompare =
+              leftCategoryRank.compareTo(rightCategoryRank);
+          if (categoryCompare != 0) return categoryCompare;
+
+          final int sortCompare = _readPersistedSortValue(
+            left,
+            const <String>['sort_order', 'service_sort'],
+          ).compareTo(
+            _readPersistedSortValue(
+              right,
+              const <String>['sort_order', 'service_sort'],
+            ),
+          );
+          if (sortCompare != 0) return sortCompare;
+          return _compareDisplayName(left, right);
+        });
+        return sorted;
+      }
+    }
+
+    return CatalogSorter.sortServiceMaps(sorted, categories: categories);
   }
 
   int? _readSyncMetric(List<Map<String, dynamic>> scopes, List<String> keys) {
@@ -774,6 +963,12 @@ class AdminApi {
 
         if (response.statusCode >= 400) {
           if (data is Map<String, dynamic>) {
+            // OTP gerekli ise exception fırlatma — veriyi döndür
+            final nestedData = data['data'];
+            final code = data['code'] ?? (nestedData is Map ? nestedData['code'] : null);
+            if (code == 'bto_otp_required') {
+              return data;
+            }
             throw ApiException(_extractErrorMessage(data));
           }
           throw ApiException('Giris basarisiz');
@@ -965,6 +1160,14 @@ class AdminApi {
     Future<Map<String, dynamic>> Function() loginAttempt,
   ) async {
     final result = await loginAttempt();
+
+    // OTP gerekli ise token doğrulama adımını atla
+    final nd = result['data'];
+    final code = result['code'] ?? (nd is Map ? nd['code'] : null);
+    if (code == 'bto_otp_required') {
+      return result;
+    }
+
     _applyResolvedLoginBase(result);
     try {
       final verification = await _verifyTokenAfterLogin();
@@ -1039,6 +1242,12 @@ class AdminApi {
 
         final data = Map<String, dynamic>.from(decoded as Map);
         if (response.statusCode >= 400 || data['success'] == false) {
+          // OTP gerekli ise döngüyü kır — wp_authenticate tekrar çağrılmasın!
+          final nestedData = data['data'];
+          final code = data['code'] ?? (nestedData is Map ? nestedData['code'] : null);
+          if (code == 'bto_otp_required') {
+            return data; // OTP bilgisini doğrudan döndür
+          }
           lastError = ApiException(_extractErrorMessage(data));
           continue;
         }
@@ -1079,9 +1288,14 @@ class AdminApi {
       '/token'
     ]) {
       try {
-        return await _loginAndValidateSession(
+        final result = await _loginAndValidateSession(
           () => _loginWithEndpoint(endpoint, username, password),
         );
+        // OTP yanıtını hemen döndür — döngüyü kır
+        final nd = result['data'];
+        final c = result['code'] ?? (nd is Map ? nd['code'] : null);
+        if (c == 'bto_otp_required') return result;
+        return result;
       } on ApiException catch (error) {
         lastError = error;
         if (_isRetryableLoginError(error)) {
@@ -1102,9 +1316,14 @@ class AdminApi {
       '/wp-json/simple-jwt-login/v1/auth',
     ]) {
       try {
-        return await _loginAndValidateSession(
+        final result = await _loginAndValidateSession(
           () => _loginWithAbsolutePath(path, username, password),
         );
+        // OTP yanıtını hemen döndür — döngüyü kır
+        final nd = result['data'];
+        final c = result['code'] ?? (nd is Map ? nd['code'] : null);
+        if (c == 'bto_otp_required') return result;
+        return result;
       } on ApiException catch (error) {
         lastError = error;
         if (_isRetryableLoginError(error)) {
@@ -1124,12 +1343,20 @@ class AdminApi {
   }
 
   Future<Map<String, dynamic>> verify() async {
-    final data = await _request('/auth/verify');
-    if (data['valid'] == true) return data;
-    if (data['ok'] == true || data['success'] == true) {
-      return <String, dynamic>{...data, 'valid': true};
+    // Önce /auth/verify dene, başarısız olursa /auth/me ile dene
+    for (final endpoint in const ['/auth/verify', '/auth/me', '/verify']) {
+      try {
+        final data = await _request(endpoint);
+        if (data['valid'] == true) return data;
+        if (data['ok'] == true || data['success'] == true) {
+          return <String, dynamic>{...data, 'valid': true};
+        }
+      } on ApiException catch (e) {
+        if (_isMissingRoute(e)) continue;
+        rethrow;
+      }
     }
-    return data;
+    throw ApiException('Token dogrulanamadi — verify endpointi bulunamadi.');
   }
 
   Future<Map<String, dynamic>> getDashboard() async {
@@ -1234,11 +1461,12 @@ class AdminApi {
 
   Future<Map<String, dynamic>> getServices({
     int page = 1,
+    int perPage = 50,
     String search = '',
     String category = '',
     String active = '',
   }) async {
-    var query = '?page=$page';
+    var query = '?page=$page&per_page=$perPage';
     if (search.isNotEmpty) query += '&search=${Uri.encodeComponent(search)}';
     if (category.isNotEmpty)
       query += '&category=${Uri.encodeComponent(category)}';
@@ -1262,13 +1490,19 @@ class AdminApi {
       map['is_active'] = map['is_active'] ?? map['active'];
       return map;
     }).toList();
+    final categories = _asList(rawCategories).map(_asMap).toList();
+    final orderedItems = _sortServicesForDisplay(
+      items,
+      categories: categories,
+      categoryScoped: category.isNotEmpty,
+    );
 
     return <String, dynamic>{
       ...data,
-      'items': items,
-      'categories': _asList(rawCategories).map(_asMap).toList(),
+      'items': orderedItems,
+      'categories': _sortCategoriesForDisplay(categories),
       'total': _asInt(data['total'],
-          fallback: _asInt(payload['total'], fallback: items.length)),
+          fallback: _asInt(payload['total'], fallback: orderedItems.length)),
       'pages': _asInt(data['pages'],
           fallback: _asInt(payload['pages'], fallback: 1)),
       'page': _asInt(data['page'],
@@ -1359,8 +1593,35 @@ class AdminApi {
       return map;
     }).toList();
 
-    return <String, dynamic>{...data, 'items': items};
+    return <String, dynamic>{
+      ...data,
+      'items': _sortCategoriesForDisplay(items)
+    };
   }
+
+  Future<Map<String, dynamic>> autoSortCatalog() => _requestWithFallback(
+        <String>[
+          '/catalog/auto-sort',
+        ],
+        method: 'POST',
+      );
+
+  Future<Map<String, dynamic>> getCatalogSortSettings() => _requestWithFallback(
+        <String>[
+          '/catalog/sort-settings',
+        ],
+      );
+
+  Future<Map<String, dynamic>> updateCatalogSortSettings(bool enabled) =>
+      _requestWithFallback(
+        <String>[
+          '/catalog/sort-settings',
+        ],
+        method: 'POST',
+        body: <String, dynamic>{
+          'auto_sort_after_sync': enabled,
+        },
+      );
 
   Future<Map<String, dynamic>> updateCategory(
           int id, Map<String, dynamic> data) =>
@@ -1463,7 +1724,13 @@ class AdminApi {
     );
   }
 
-  Future<Map<String, dynamic>> getUserDetail(int id) async {
+  Future<Map<String, dynamic>> getBalanceLogs(int userId, {int page = 1}) {
+    return _requestWithFallback(
+      ['/users/$userId/balance-logs?page=$page'],
+    );
+  }
+
+    Future<Map<String, dynamic>> getUserDetail(int id) async {
     try {
       return await _requestWithFallback([
         '/users/$id/detail',
@@ -1608,6 +1875,9 @@ class AdminApi {
     Map<String, dynamic> sessionsData = {
       'items': const <Map<String, dynamic>>[]
     };
+    Map<String, dynamic> balanceLogsData = {
+      'items': const <Map<String, dynamic>>[]
+    };
 
     try {
       detail = await getUserDetail(id);
@@ -1621,6 +1891,9 @@ class AdminApi {
     try {
       sessionsData = await getUserSessions(id);
     } catch (_) {}
+    try {
+      balanceLogsData = await getBalanceLogs(id);
+    } catch (_) {}
 
     final user = _asMap(detail['user']).isNotEmpty
         ? _asMap(detail['user'])
@@ -1633,6 +1906,10 @@ class AdminApi {
     final logs = _asList(logsData['items']).map(_normalizeUserLog).toList();
     final sessions =
         _asList(sessionsData['items']).map(_normalizeUserSession).toList();
+    final rawBalanceLogs = balanceLogsData['items'] ?? balanceLogsData['data'];
+    final balanceLogs = _asList(rawBalanceLogs)
+        .map((e) => _asMap(e))
+        .toList();
 
     final topServicesMap = <String, Map<String, dynamic>>{};
     var totalSpent = 0.0;
@@ -1759,6 +2036,7 @@ class AdminApi {
       'orders': orders,
       'logs': logs,
       'sessions': sessions,
+      'balance_logs': balanceLogs,
       'top_services': topServices.take(10).toList(),
       'ip_summary': ipSummary,
       'timeline': timeline,
@@ -1819,12 +2097,664 @@ class AdminApi {
     return _request('/payments/$id/action', method: 'POST', body: body);
   }
 
+  List<Map<String, dynamic>> _normalizeSupportMessages(dynamic rawValue) {
+    final rawList = _asList(rawValue);
+    return rawList
+        .map((item) {
+          final raw = _asMap(item);
+          final id = _asInt(raw['id'] ?? raw['thread_id'] ?? raw['message_id']);
+          final createdAt = _pickString(raw,
+              ['date', 'created_at', 'createdAt', 'time', 'timestamp'], '');
+          final senderName = _pickString(raw, [
+            'sender_name',
+            'name',
+            'display_name',
+            'author_name',
+            'user_name'
+          ]);
+          final senderType = _pickString(
+                  raw,
+                  [
+                    'sender_type',
+                    'from',
+                    'type',
+                    'author_type',
+                    'source',
+                  ],
+                  'user')
+              .toLowerCase();
+          final body = _pickString(raw, [
+            'message',
+            'body',
+            'text',
+            'content',
+            'html',
+          ]);
+          final isInternal = _asBool(
+              raw['is_internal'] ?? raw['internal'] ?? raw['is_note'] ?? false);
+
+          return <String, dynamic>{
+            ...raw,
+            'id': id,
+            'message_id': id,
+            'sender_name': senderName,
+            'sender_type': senderType,
+            'from': senderType,
+            'message': body,
+            'body': body,
+            'is_internal': isInternal,
+            'created_at': createdAt,
+            'date': createdAt,
+          };
+        })
+        .where((message) => '${message['message']}'.trim().isNotEmpty)
+        .toList();
+  }
+
+  Map<String, dynamic> _normalizeSupportTicket(dynamic rawValue) {
+    final raw = _asMap(rawValue);
+    final ticketId =
+        _asInt(raw['id'] ?? raw['ticket_id'] ?? raw['conversation_id']);
+    final createdAt = _pickString(
+        raw, ['created_at', 'createdAt', 'date', 'time', 'timestamp'], '');
+    final updatedAt = _pickString(
+        raw, ['updated_at', 'updatedAt', 'last_reply_at'], createdAt);
+    final replies = _normalizeSupportMessages(
+      raw['replies'] ??
+          raw['messages'] ??
+          raw['threads'] ??
+          raw['items'] ??
+          const <dynamic>[],
+    );
+    final subject = _pickString(raw, ['subject', 'title', 'topic'], '-');
+    final status = _pickString(raw,
+        ['status', 'ticket_status', 'state', 'conversation_status'], 'open');
+    final priority =
+        _pickString(raw, ['priority', 'urgency', 'importance'], 'normal');
+    final message = _pickString(raw, ['message', 'body', 'text', 'content']);
+    final email = _pickString(raw, [
+      'email',
+      'user_email',
+      'customer_email',
+      'from_email',
+    ]);
+    final userName = _pickString(raw, [
+      'user_name',
+      'customer_name',
+      'name',
+      'display_name',
+      'full_name',
+    ]);
+    final ticketNo = _pickString(
+        raw,
+        [
+          'ticket_no',
+          'number',
+          'ticket_number',
+          'conversation_number',
+        ],
+        '#$ticketId');
+
+    return <String, dynamic>{
+      ...raw,
+      'id': ticketId,
+      'ticket_no': ticketNo,
+      'subject': subject,
+      'status': status,
+      'priority': priority,
+      'message': message,
+      'user_name': userName,
+      'email': email,
+      'created_at': createdAt,
+      'updated_at': updatedAt,
+      'replies': replies,
+      'unread_count': _asInt(raw['unread_count']),
+    };
+  }
+
+  Map<String, dynamic> _normalizeSupportPayload(
+    Map<String, dynamic> data, {
+    int pageFallback = 1,
+  }) {
+    final payload = _asMap(data['data']);
+    final embedded = _asMap(data['_embedded']);
+    final payloadEmbedded = _asMap(payload['_embedded']);
+    final rawItems = data['items'] ??
+        data['tickets'] ??
+        data['conversations'] ??
+        payload['items'] ??
+        payload['tickets'] ??
+        payload['conversations'] ??
+        embedded['conversations'] ??
+        payloadEmbedded['conversations'];
+    final items = _asList(rawItems).map(_normalizeSupportTicket).toList();
+    final pageMeta = _asMap(payload['page']);
+    final total = _asInt(data['total'],
+        fallback: _asInt(payload['total'], fallback: items.length));
+    final size = _asInt(
+      pageMeta['size'],
+      fallback: _asInt(payload['per_page'], fallback: 20),
+    );
+    final pagesFromMeta =
+        size > 0 ? ((total + size - 1) ~/ size).clamp(1, 999999) : 1;
+
+    return <String, dynamic>{
+      ...data,
+      'items': items,
+      'tickets': items,
+      'total': total,
+      'page': _asInt(
+        data['page'],
+        fallback: _asInt(
+          payload['page'],
+          fallback: _asInt(pageMeta['number'], fallback: pageFallback),
+        ),
+      ),
+      'pages': _asInt(data['pages'],
+          fallback: _asInt(payload['pages'], fallback: pagesFromMeta)),
+    };
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchSupportThreads(
+    int ticketId, {
+    int sinceId = 0,
+    int limit = 200,
+  }) async {
+    final queryParts = <String>[
+      if (sinceId > 0) 'since_id=$sinceId',
+      if (limit > 0) 'limit=$limit',
+    ];
+    final query = queryParts.isEmpty ? '' : '?${queryParts.join('&')}';
+
+    try {
+      final data = await _requestWithFallback([
+        '/conversations/$ticketId/messages$query',
+        '/conversations/$ticketId/threads$query',
+        '/tickets/$ticketId/messages$query',
+        '/support/tickets/$ticketId/messages$query',
+      ]);
+      final payload = _asMap(data['data']);
+      final embedded = _asMap(data['_embedded']);
+      final payloadEmbedded = _asMap(payload['_embedded']);
+      final rawMessages = data['messages'] ??
+          data['threads'] ??
+          data['replies'] ??
+          payload['messages'] ??
+          payload['threads'] ??
+          payload['replies'] ??
+          embedded['threads'] ??
+          payloadEmbedded['threads'];
+      var messages = _normalizeSupportMessages(rawMessages);
+      if (sinceId > 0) {
+        messages = messages
+            .where((message) => _asInt(message['id']) > sinceId)
+            .toList();
+      }
+      messages.sort((a, b) => _asInt(a['id']).compareTo(_asInt(b['id'])));
+      return messages;
+    } on ApiException catch (error) {
+      if (_isMissingRoute(error)) {
+        return <Map<String, dynamic>>[];
+      }
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> _fetchSupportTicketsPage({
+    required int page,
+    required int perPage,
+    String status = '',
+    String search = '',
+  }) async {
+    final cleanStatus = status.trim();
+    final cleanSearch = search.trim();
+    final queryItems = <String, String>{
+      'page': '$page',
+      if (perPage > 0) 'per_page': '$perPage',
+      if (perPage > 0) 'limit': '$perPage',
+      if (cleanStatus.isNotEmpty) 'status': cleanStatus,
+      if (cleanSearch.isNotEmpty) 'search': cleanSearch,
+    };
+    final query = queryItems.entries
+        .map((entry) => '${entry.key}=${Uri.encodeComponent(entry.value)}')
+        .join('&');
+    return _requestWithFallback([
+      '/conversations?$query',
+      '/support/tickets?$query',
+      '/tickets?$query',
+    ]);
+  }
+
+  bool _isRetryableSupportError(ApiException error) {
+    final message = _normalizeMatchText(error.message);
+    return _isMissingRoute(error) ||
+        _looksLikeCloudflareBlock(error.message.toLowerCase()) ||
+        message.contains('kritik bir hata') ||
+        message.contains('critical error') ||
+        message.contains('gecersiz yanit') ||
+        message.contains('json hatasi') ||
+        message.contains('sunucudan yanit alinamadi') ||
+        message.contains('endpoint bulunamadi') ||
+        message.contains('talep edilen endpoint sunucuda bulunamadi') ||
+        message.contains('http 500') ||
+        message.contains('http 502') ||
+        message.contains('http 503') ||
+        message.contains('http 504');
+  }
+
+  List<Uri> _buildSupportAdminUris(
+    String path, {
+    Map<String, String>? queryParameters,
+  }) {
+    final root = _siteRootUrl();
+    final normalizedPath = path.startsWith('/') ? path : '/$path';
+    final cleanQuery = <String, String>{
+      for (final entry in (queryParameters ?? const <String, String>{}).entries)
+        if (entry.value.trim().isNotEmpty) entry.key: entry.value,
+    };
+
+    final primary = Uri.parse('$root/wp-json/bzs/v1$normalizedPath').replace(
+      queryParameters: cleanQuery.isEmpty ? null : cleanQuery,
+    );
+
+    final siteUri = Uri.parse(root);
+    final secondaryQuery = <String, String>{
+      'rest_route': '/bzs/v1$normalizedPath',
+      ...cleanQuery,
+    };
+
+    return <Uri>[
+      primary,
+      siteUri.replace(
+        path: siteUri.path.isEmpty ? '/' : siteUri.path,
+        queryParameters: secondaryQuery,
+      ),
+    ];
+  }
+
+  Future<Map<String, dynamic>> _requestSupportAdminAbsolute(
+    String path, {
+    String method = 'GET',
+    Map<String, String>? queryParameters,
+    Map<String, dynamic>? body,
+  }) async {
+    ApiException? lastError;
+    final upperMethod = method.toUpperCase();
+
+    for (final uri
+        in _buildSupportAdminUris(path, queryParameters: queryParameters)) {
+      late http.Response response;
+      try {
+        switch (upperMethod) {
+          case 'POST':
+            response = await http
+                .post(
+                  uri,
+                  headers: _jsonHeaders(),
+                  body: body != null ? json.encode(body) : null,
+                )
+                .timeout(_requestTimeout);
+            break;
+          default:
+            response = await http
+                .get(uri, headers: _jsonHeaders())
+                .timeout(_requestTimeout);
+        }
+      } on TimeoutException {
+        lastError = ApiException(
+            'Sunucu yanit vermiyor (45 sn zaman asimi). Lutfen tekrar deneyin.');
+        continue;
+      } on http.ClientException catch (error) {
+        lastError = ApiException('Baglanti hatasi: ${error.message}');
+        continue;
+      } catch (error) {
+        lastError = ApiException('Baglanti hatasi: $error');
+        continue;
+      }
+
+      final respBody = utf8.decode(response.bodyBytes).trim();
+      if (respBody.isEmpty) {
+        lastError = ApiException('Sunucudan yanit alinamadi.');
+        continue;
+      }
+
+      if (respBody.startsWith('<')) {
+        lastError = ApiException(_normalizeErrorText(respBody));
+        if (_isRetryableSupportError(lastError)) {
+          continue;
+        }
+        throw lastError;
+      }
+
+      dynamic decoded;
+      try {
+        decoded = json.decode(respBody);
+      } on FormatException {
+        lastError = ApiException(_normalizeErrorText(respBody));
+        if (_isRetryableSupportError(lastError)) {
+          continue;
+        }
+        throw lastError;
+      }
+
+      if (decoded is Map<String, dynamic> && _looksLikeRouteError(decoded)) {
+        lastError = ApiException(_extractErrorMessage(decoded));
+        if (_isRetryableSupportError(lastError)) {
+          continue;
+        }
+        throw lastError;
+      }
+
+      if (response.statusCode == 401) {
+        throw AuthExpiredException('Oturum suresi doldu');
+      }
+
+      if (response.statusCode >= 400) {
+        if (decoded is Map<String, dynamic>) {
+          final extracted = _extractErrorMessage(decoded);
+          if (response.statusCode == 403 &&
+              _looksLikeExpiredSession(extracted)) {
+            throw AuthExpiredException('Oturum suresi doldu');
+          }
+          lastError = ApiException(extracted);
+        } else {
+          lastError = ApiException('HTTP ${response.statusCode}');
+        }
+        if (_isRetryableSupportError(lastError)) {
+          continue;
+        }
+        throw lastError;
+      }
+
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+      return <String, dynamic>{'data': decoded};
+    }
+
+    throw lastError ?? ApiException('Sunucudan yanit alinamadi.');
+  }
+
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ADMIN DESTEK (bzs/v1/admin/tickets)
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+  /// Admin iÃ§in tÃ¼m ticketlarÄ± getirir.
+  Future<Map<String, dynamic>> getSupportTickets({
+    int page = 1,
+    int perPage = 100,
+    String status = '',
+  }) async {
+    final params = <String, String>{
+      'per_page': '$perPage',
+      'page': '$page',
+      if (status.isNotEmpty) 'status': status,
+      '_ts': DateTime.now().millisecondsSinceEpoch.toString(),
+    };
+    final query = params.entries
+        .map((entry) => '${entry.key}=${Uri.encodeComponent(entry.value)}')
+        .join('&');
+
+    try {
+      final primary = await _requestWithFallback([
+        '/support/tickets?$query',
+      ]);
+      return _normalizeSupportPayload(primary, pageFallback: page);
+    } on ApiException catch (error) {
+      if (!_isRetryableSupportError(error)) {
+        rethrow;
+      }
+    }
+
+    try {
+      final legacy = await _requestSupportAdminAbsolute(
+        '/admin/tickets',
+        queryParameters: params,
+      );
+      return _normalizeSupportPayload(legacy, pageFallback: page);
+    } on ApiException catch (error) {
+      if (!_isRetryableSupportError(error)) {
+        rethrow;
+      }
+
+      final fallback = await _fetchSupportTicketsPage(
+        page: page,
+        perPage: perPage,
+        status: status,
+      );
+      return _normalizeSupportPayload(fallback, pageFallback: page);
+    }
+  }
+
+  /// Aktif ticket'Ä±n gÃ¼ncellemelerini getirir.
+  Future<Map<String, dynamic>> getSupportTicketUpdates(
+    int ticketId, {
+    int sinceId = 0,
+  }) async {
+    try {
+      final query = <String, String>{
+        if (sinceId > 0) 'since_id': '$sinceId',
+        '_ts': DateTime.now().millisecondsSinceEpoch.toString(),
+      }
+          .entries
+          .map((entry) => '${entry.key}=${Uri.encodeComponent(entry.value)}')
+          .join('&');
+
+      final data = await _requestWithFallback([
+        '/support/tickets/$ticketId/messages?$query',
+        '/conversations/$ticketId/messages?$query',
+        '/tickets/$ticketId/messages?$query',
+      ]);
+
+      final ticket = _asMap(data['ticket']);
+      final threads = _normalizeSupportMessages(
+        data['threads'] ??
+            data['messages'] ??
+            data['replies'] ??
+            ticket['messages'] ??
+            ticket['threads'],
+      );
+
+      if (threads.isNotEmpty) {
+        ticket['messages'] = threads;
+      }
+
+      if (ticket.isNotEmpty) {
+        return <String, dynamic>{'ticket': ticket};
+      }
+    } on ApiException catch (_) {}
+
+    final root = _siteRootUrl();
+    final params = <String, String>{
+      if (sinceId > 0) 'since_id': '$sinceId',
+      '_ts': DateTime.now().millisecondsSinceEpoch.toString(),
+    };
+
+    final uri =
+        Uri.parse('$root/wp-json/bzs/v1/admin/tickets/$ticketId/messages')
+            .replace(queryParameters: params);
+
+    try {
+      final response =
+          await http.get(uri, headers: _jsonHeaders()).timeout(_requestTimeout);
+      final body = utf8.decode(response.bodyBytes).trim();
+      final decoded = json.decode(body);
+      if (decoded is Map<String, dynamic> && decoded['success'] == true) {
+        final ticket = _asMap(decoded['ticket']);
+        final threads = _asList(decoded['threads']);
+        if (threads.isNotEmpty) ticket['messages'] = threads;
+        return <String, dynamic>{'ticket': ticket};
+      }
+    } catch (_) {}
+    return <String, dynamic>{'ticket': null};
+  }
+
+  /// OperatÃ¶r yanÄ±tÄ± gÃ¶nderir.
+  Future<Map<String, dynamic>> replySupportTicket(
+    int ticketId,
+    String bodyText, {
+    bool internal = false,
+  }) async {
+    try {
+      return await _requestWithFallback(
+        [
+          '/support/tickets/$ticketId/messages',
+        ],
+        method: 'POST',
+        body: <String, dynamic>{
+          'body': bodyText,
+          'is_internal': internal ? 1 : 0,
+        },
+      );
+    } on ApiException catch (_) {}
+
+    final root = _siteRootUrl();
+    final uri =
+        Uri.parse('$root/wp-json/bzs/v1/admin/tickets/$ticketId/messages');
+
+    final resp = await http
+        .post(
+          uri,
+          headers: _jsonHeaders(),
+          body: json.encode(<String, dynamic>{
+            'body': bodyText,
+            'is_internal': internal ? 1 : 0,
+          }),
+        )
+        .timeout(_requestTimeout);
+
+    if (resp.statusCode >= 400) throw ApiException('HTTP ${resp.statusCode}');
+    return <String, dynamic>{'success': true};
+  }
+
+  /// Ticket durumunu gÃ¼nceller.
+  Future<Map<String, dynamic>> updateSupportTicketStatus(
+      int ticketId, String status) async {
+    try {
+      return await _requestWithFallback(
+        [
+          '/support/tickets/$ticketId/status',
+        ],
+        method: 'POST',
+        body: <String, dynamic>{'status': status},
+      );
+    } on ApiException catch (_) {}
+
+    final root = _siteRootUrl();
+    final uri =
+        Uri.parse('$root/wp-json/bzs/v1/admin/tickets/$ticketId/status');
+
+    final resp = await http
+        .post(
+          uri,
+          headers: _jsonHeaders(),
+          body: json.encode(<String, dynamic>{'status': status}),
+        )
+        .timeout(_requestTimeout);
+
+    if (resp.statusCode >= 400) throw ApiException('HTTP ${resp.statusCode}');
+    return <String, dynamic>{'success': true};
+  }
+
+  /// Ticket'Ä± admin tarafÄ±nda okundu iÅŸaretler.
+  Future<Map<String, dynamic>> markSupportTicketRead(int ticketId) async {
+    try {
+      return await _requestWithFallback(
+        [
+          '/support/tickets/$ticketId/read',
+        ],
+        method: 'POST',
+      );
+    } on ApiException catch (_) {}
+
+    final root = _siteRootUrl();
+    final uri = Uri.parse('$root/wp-json/bzs/v1/admin/tickets/$ticketId/read');
+
+    try {
+      await http.post(uri, headers: _jsonHeaders()).timeout(_requestTimeout);
+    } catch (_) {}
+    return <String, dynamic>{'success': true};
+  }
+
   Future<Map<String, dynamic>> getTickets({int page = 1}) =>
-      _request('/tickets?page=$page');
+      getSupportTickets(page: page);
 
   Future<Map<String, dynamic>> replyTicket(int id, String message) =>
-      _request('/tickets/$id/reply',
-          method: 'POST', body: {'message': message});
+      replySupportTicket(id, message);
+
+  Future<Map<String, dynamic>> _requestBzsAdminFallback(
+    List<String> paths, {
+    String method = 'GET',
+    Map<String, String>? queryParameters,
+    Map<String, dynamic>? body,
+  }) async {
+    var treatedAsUnavailable = false;
+    for (final path in paths) {
+      try {
+        return await _requestSupportAdminAbsolute(
+          path,
+          method: method,
+          queryParameters: queryParameters,
+          body: body,
+        );
+      } on AuthExpiredException {
+        // bzs/v1 namespace may enforce a different JWT flow.
+        treatedAsUnavailable = true;
+        continue;
+      } on ApiException catch (error) {
+        final normalized = _normalizeMatchText(error.message);
+        final looksLikeJwtGate = _looksLikeRestAuthGate(error.message) ||
+            normalized.contains('rest_forbidden') ||
+            normalized.contains('jwt token') ||
+            normalized.contains('authorization token gerekli');
+        if (_isMissingRoute(error) || looksLikeJwtGate) {
+          treatedAsUnavailable = true;
+          continue;
+        }
+        rethrow;
+      }
+    }
+    if (treatedAsUnavailable || paths.isNotEmpty) {
+      throw ApiException('Talep edilen endpoint sunucuda bulunamadi.');
+    }
+    throw ApiException('Talep edilen endpoint sunucuda bulunamadi.');
+  }
+
+  Map<String, dynamic> _normalizeNotificationPayload(
+      Map<String, dynamic> input) {
+    final payload = Map<String, dynamic>.from(input);
+    final title = '${payload['title'] ?? payload['subject'] ?? ''}'.trim();
+    final message =
+        '${payload['message'] ?? payload['body'] ?? payload['text'] ?? ''}'
+            .trim();
+    final action =
+        '${payload['action'] ?? payload['link_url'] ?? payload['cta_url'] ?? payload['url'] ?? ''}'
+            .trim();
+    final audience = '${payload['audience'] ?? ''}'.trim();
+
+    if (title.isNotEmpty) {
+      payload['title'] = title;
+      payload['subject'] = title;
+    }
+    if (message.isNotEmpty) {
+      payload['message'] = message;
+      payload['body'] = message;
+      payload['text'] = message;
+    }
+    if (action.isNotEmpty) {
+      payload['action'] = action;
+      payload['link_url'] = action;
+      payload['cta_url'] = action;
+      payload['url'] = action;
+    }
+    if (audience.isNotEmpty) {
+      payload['audience'] = audience;
+    } else {
+      payload['audience'] = 'all';
+    }
+
+    return payload;
+  }
 
   Future<Map<String, dynamic>> getNotifications({
     int page = 1,
@@ -1859,7 +2789,31 @@ class AdminApi {
         'supported': true,
       };
     } on ApiException catch (error) {
-      if (_isMissingRoute(error)) {
+      if (!_isMissingRoute(error)) rethrow;
+      try {
+        final data = await _requestBzsAdminFallback(
+          const [
+            '/admin/notifications',
+            '/admin/push-notifications',
+            '/admin/notifications/list',
+          ],
+          queryParameters: queryItems,
+        );
+        final payload = _asMap(data['data']);
+        final rawItems = data['items'] ??
+            data['notifications'] ??
+            payload['items'] ??
+            payload['notifications'];
+        return <String, dynamic>{
+          ...data,
+          'items': _asList(rawItems).map(_normalizeNotification).toList(),
+          'total': _asInt(data['total'], fallback: _asInt(payload['total'])),
+          'page': _asInt(data['page'], fallback: page),
+          'pages': _asInt(data['pages'], fallback: 1),
+          'supported': true,
+        };
+      } on ApiException catch (fallbackError) {
+        if (!_isMissingRoute(fallbackError)) rethrow;
         return <String, dynamic>{
           'items': const <Map<String, dynamic>>[],
           'total': 0,
@@ -1868,23 +2822,36 @@ class AdminApi {
           'supported': false,
         };
       }
-      rethrow;
     }
   }
 
   Future<Map<String, dynamic>> sendNotification(
       Map<String, dynamic> data) async {
+    final payload = _normalizeNotificationPayload(data);
     try {
       return await _requestWithFallback([
         '/notifications/send',
         '/push-notifications/send',
         '/notifications',
-      ], method: 'POST', body: data);
+      ], method: 'POST', body: payload);
     } on ApiException catch (error) {
-      if (_isMissingRoute(error)) {
-        throw ApiException('Bildirim servisi bu sunucuda bulunmuyor');
+      if (!_isMissingRoute(error)) rethrow;
+      try {
+        return await _requestBzsAdminFallback(
+          const [
+            '/admin/notifications/send',
+            '/admin/push-notifications/send',
+            '/admin/notifications',
+          ],
+          method: 'POST',
+          body: payload,
+        );
+      } on ApiException catch (fallbackError) {
+        if (_isMissingRoute(fallbackError)) {
+          throw ApiException('Bildirim servisi bu sunucuda bulunmuyor');
+        }
+        rethrow;
       }
-      rethrow;
     }
   }
 
@@ -1918,7 +2885,31 @@ class AdminApi {
         'supported': true,
       };
     } on ApiException catch (error) {
-      if (_isMissingRoute(error)) {
+      if (!_isMissingRoute(error)) rethrow;
+      try {
+        final data = await _requestBzsAdminFallback(
+          const [
+            '/admin/campaigns',
+            '/admin/marketing/campaigns',
+            '/admin/notifications/campaigns',
+          ],
+          queryParameters: queryItems,
+        );
+        final payload = _asMap(data['data']);
+        final rawItems = data['items'] ??
+            data['campaigns'] ??
+            payload['items'] ??
+            payload['campaigns'];
+        return <String, dynamic>{
+          ...data,
+          'items': _asList(rawItems).map(_normalizeCampaign).toList(),
+          'total': _asInt(data['total'], fallback: _asInt(payload['total'])),
+          'page': _asInt(data['page'], fallback: page),
+          'pages': _asInt(data['pages'], fallback: 1),
+          'supported': true,
+        };
+      } on ApiException catch (fallbackError) {
+        if (!_isMissingRoute(fallbackError)) rethrow;
         return <String, dynamic>{
           'items': const <Map<String, dynamic>>[],
           'total': 0,
@@ -1927,7 +2918,6 @@ class AdminApi {
           'supported': false,
         };
       }
-      rethrow;
     }
   }
 
@@ -1940,10 +2930,24 @@ class AdminApi {
         '/notifications/campaigns',
       ], method: 'POST', body: payload);
     } on ApiException catch (error) {
-      if (_isMissingRoute(error)) {
-        throw ApiException('Kampanya servisi bu sunucuda bulunmuyor');
+      if (!_isMissingRoute(error)) rethrow;
+      try {
+        final payload = _normalizeCampaignPayload(data);
+        return await _requestBzsAdminFallback(
+          const [
+            '/admin/campaigns',
+            '/admin/marketing/campaigns',
+            '/admin/notifications/campaigns',
+          ],
+          method: 'POST',
+          body: payload,
+        );
+      } on ApiException catch (fallbackError) {
+        if (_isMissingRoute(fallbackError)) {
+          throw ApiException('Kampanya servisi bu sunucuda bulunmuyor');
+        }
+        rethrow;
       }
-      rethrow;
     }
   }
 
@@ -1957,10 +2961,24 @@ class AdminApi {
         '/notifications/campaigns/$id',
       ], method: 'POST', body: payload);
     } on ApiException catch (error) {
-      if (_isMissingRoute(error)) {
-        throw ApiException('Kampanya guncelleme bu sunucuda desteklenmiyor');
+      if (!_isMissingRoute(error)) rethrow;
+      try {
+        final payload = _normalizeCampaignPayload(data);
+        return await _requestBzsAdminFallback(
+          [
+            '/admin/campaigns/$id',
+            '/admin/marketing/campaigns/$id',
+            '/admin/notifications/campaigns/$id',
+          ],
+          method: 'POST',
+          body: payload,
+        );
+      } on ApiException catch (fallbackError) {
+        if (_isMissingRoute(fallbackError)) {
+          throw ApiException('Kampanya guncelleme bu sunucuda desteklenmiyor');
+        }
+        rethrow;
       }
-      rethrow;
     }
   }
 
@@ -2437,6 +3455,19 @@ class AdminApi {
     };
   }
 
+  Map<String, dynamic> _normalizeSecurityLogItem(dynamic item) {
+    final data =
+        item is Map ? Map<String, dynamic>.from(item) : <String, dynamic>{};
+    return {
+      ...data,
+      'ip': _pickString(data, ['ip', 'user_ip', 'address'], '-'),
+      'event': _pickString(data, ['event', 'type', 'action'], '-'),
+      'message': _pickString(data, ['message', 'details', 'note'], '-'),
+      'date':
+          _pickString(data, ['date', 'created_at', 'time', 'timestamp'], '-'),
+    };
+  }
+
   Map<String, dynamic> _normalizeUserLog(dynamic item) {
     final data =
         item is Map ? Map<String, dynamic>.from(item) : <String, dynamic>{};
@@ -2488,17 +3519,206 @@ class AdminApi {
     };
   }
 
-  Map<String, dynamic> _normalizeSecurityLogItem(dynamic item) {
-    final data =
-        item is Map ? Map<String, dynamic>.from(item) : <String, dynamic>{};
-    return {
-      ...data,
-      'ip': _pickString(data, ['ip', 'user_ip', 'address']),
-      'event': _pickString(data, ['event', 'action', 'type'], 'security'),
-      'message': _pickString(data, ['message', 'reason', 'details', 'event']),
-      'type': _pickString(data, ['type', 'level', 'action'], 'info'),
-      'date': _pickString(data, ['date', 'created_at', 'time', 'timestamp']),
+  // ─── Bildirim Silme ───────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> deleteNotification(int id) async {
+    try {
+      return await _requestWithFallback([
+        '/notifications/$id/delete',
+        '/push-notifications/$id/delete',
+        '/notifications/$id',
+      ], method: 'POST');
+    } on ApiException catch (error) {
+      if (!_isMissingRoute(error)) rethrow;
+      try {
+        return await _requestBzsAdminFallback([
+          '/admin/notifications/$id/delete',
+          '/admin/push-notifications/$id/delete',
+          '/admin/notifications/$id',
+        ], method: 'POST');
+      } on ApiException catch (fallbackError) {
+        if (_isMissingRoute(fallbackError)) {
+          throw ApiException('Bildirim silme bu sunucuda desteklenmiyor');
+        }
+        rethrow;
+      }
+    }
+  }
+
+  // ─── Kampanya Silme ───────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> deleteCampaign(int id) async {
+    try {
+      return await _requestWithFallback([
+        '/campaigns/$id/delete',
+        '/marketing/campaigns/$id/delete',
+        '/notifications/campaigns/$id/delete',
+      ], method: 'POST');
+    } on ApiException catch (error) {
+      if (!_isMissingRoute(error)) rethrow;
+      try {
+        return await _requestBzsAdminFallback([
+          '/admin/campaigns/$id/delete',
+          '/admin/marketing/campaigns/$id/delete',
+          '/admin/notifications/campaigns/$id/delete',
+        ], method: 'POST');
+      } on ApiException catch (fallbackError) {
+        if (_isMissingRoute(fallbackError)) {
+          throw ApiException('Kampanya silme bu sunucuda desteklenmiyor');
+        }
+        rethrow;
+      }
+    }
+  }
+
+  // ─── Destek Bildirim (Admin Unread) ─────────────────────────────────────
+
+  /// Admin uçnoktasından yeni müşteri destek mesajlarını çeker.
+  /// [sinceId] → 0 ise tüm aktif ticketlar döner.
+  Future<Map<String, dynamic>> getSupportUnread({int sinceId = 0}) async {
+    final params = <String, String>{
+      'since_id': '$sinceId',
+      'per_page': '20',
+      '_ts': DateTime.now().millisecondsSinceEpoch.toString(),
     };
+    final query = params.entries
+        .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')
+        .join('&');
+
+    // Önce ana namespace ile dene
+    try {
+      final data = await _requestWithFallback([
+        '/support/notifications/unread?$query',
+        '/admin/notifications/unread?$query',
+      ]);
+      return _normalizeSupportUnreadPayload(data);
+    } on ApiException catch (_) {}
+
+    // Fallback: bzs/v1 namespace ile dene
+    final root = _siteRootUrl();
+    final uri = Uri.parse('$root/wp-json/bzs/v1/admin/notifications/unread')
+        .replace(queryParameters: params);
+
+    try {
+      final response =
+          await http.get(uri, headers: _jsonHeaders()).timeout(_requestTimeout);
+      final body = utf8.decode(response.bodyBytes).trim();
+      final decoded = json.decode(body);
+      if (decoded is Map<String, dynamic>) {
+        return _normalizeSupportUnreadPayload(decoded);
+      }
+    } catch (_) {}
+
+    return <String, dynamic>{
+      'count': 0,
+      'since_id': sinceId,
+      'items': <Map<String, dynamic>>[],
+    };
+  }
+
+  Map<String, dynamic> _normalizeSupportUnreadPayload(
+      Map<String, dynamic> data) {
+    final items = <Map<String, dynamic>>[];
+    for (final raw in _asList(data['items'])) {
+      if (raw is Map) {
+        items.add(Map<String, dynamic>.from(raw));
+      }
+    }
+    return <String, dynamic>{
+      'count': _asInt(data['count'], fallback: items.length),
+      'since_id': _asInt(data['since_id']),
+      'items': items,
+    };
+  }
+
+  // ─── Telegram OTP Verification ────────────────────────
+
+  /// Verify OTP code via admin-ajax.php
+  Future<Map<String, dynamic>> verifyOtp(
+    String siteUrl,
+    String sessionToken,
+    String code,
+  ) async {
+    final root = _normalizeRootUrl(siteUrl);
+    final ajaxUri = Uri.parse('$root/wp-admin/admin-ajax.php');
+
+    final response = await http.post(
+      ajaxUri,
+      headers: _formHeaders(),
+      body: {
+        'action': 'bto_verify_otp',
+        'session_token': sessionToken,
+        'code': code,
+      },
+    ).timeout(_requestTimeout);
+
+    final respBody = utf8.decode(response.bodyBytes).trim();
+    if (respBody.isEmpty) {
+      throw ApiException('Sunucudan yanit alinamadi.');
+    }
+
+    dynamic decoded;
+    try {
+      decoded = json.decode(respBody);
+    } on FormatException {
+      throw ApiException(_normalizeErrorText(respBody));
+    }
+
+    if (decoded is! Map) {
+      throw ApiException('Gecersiz sunucu yaniti.');
+    }
+
+    final data2 = Map<String, dynamic>.from(decoded);
+    if (data2['success'] == true) {
+      var token = _extractTokenFromLoginMap(data2);
+      if (token.isEmpty) {
+        token = _extractTokenFromHeaders(response.headers);
+      }
+      if (token.isNotEmpty) {
+        _token = token;
+      }
+      return data2;
+    }
+
+    final msg = data2['data'] is Map
+        ? '${(data2['data'] as Map)['message'] ?? 'Dogrulama basarisiz.'}'
+        : 'Dogrulama basarisiz.';
+    throw ApiException(msg);
+  }
+
+  /// Resend OTP code via admin-ajax.php
+  Future<Map<String, dynamic>> resendOtp(
+    String siteUrl,
+    String sessionToken,
+  ) async {
+    final root = _normalizeRootUrl(siteUrl);
+    final ajaxUri = Uri.parse('$root/wp-admin/admin-ajax.php');
+
+    final response = await http.post(
+      ajaxUri,
+      headers: _formHeaders(),
+      body: {
+        'action': 'bto_resend_otp',
+        'session_token': sessionToken,
+      },
+    ).timeout(_requestTimeout);
+
+    final respBody = utf8.decode(response.bodyBytes).trim();
+    if (respBody.isEmpty) {
+      throw ApiException('Sunucudan yanit alinamadi.');
+    }
+
+    dynamic decoded;
+    try {
+      decoded = json.decode(respBody);
+    } on FormatException {
+      throw ApiException(_normalizeErrorText(respBody));
+    }
+
+    if (decoded is Map) {
+      return Map<String, dynamic>.from(decoded);
+    }
+    return <String, dynamic>{'success': false};
   }
 }
 

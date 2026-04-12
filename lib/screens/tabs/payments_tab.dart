@@ -25,9 +25,11 @@ class _PaymentsTabState extends State<PaymentsTab> {
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() => _loading = true);
     try {
       final d = await AdminApi().getPayments(page: _page, status: _status);
+      if (!mounted) return;
       setState(() {
         _items = d['items'] as List? ?? [];
         _total = d['total'] ?? 0;
@@ -35,10 +37,10 @@ class _PaymentsTabState extends State<PaymentsTab> {
         _loading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _loading = false);
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
     }
   }
 
@@ -356,12 +358,16 @@ class _PaymentsTabState extends State<PaymentsTab> {
                   if (amount == null || amount <= 0) return;
                   Navigator.pop(ctx);
                   try {
-                    await AdminApi()
+                    final result = await AdminApi()
                         .updateBalance(userId, amount, 'add', descCtrl.text);
                     if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text('Bonus eklendi ✅'),
+                      final before = result['balance_before'] ?? '?';
+                      final after = result['balance_after'] ?? '?';
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(
+                            '+${_fmt.format(amount)} ₺ bonus eklendi ✅\nBakiye: $before → $after ₺'),
                         backgroundColor: AppTheme.success,
+                        duration: const Duration(seconds: 3),
                       ));
                     }
                     _load();
@@ -388,6 +394,170 @@ class _PaymentsTabState extends State<PaymentsTab> {
     );
   }
 
+
+  Future<void> _showBalanceEditDialog(Map<String, dynamic> payment) async {
+    final userId = _userIdOf(payment);
+    if (userId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Kullanici ID bulunamadi.'),
+          backgroundColor: AppTheme.error,
+        ));
+      }
+      return;
+    }
+
+    final amountCtrl = TextEditingController();
+    final descCtrl = TextEditingController(text: 'Yonetici bakiye duzenlemesi');
+    String actionType = 'add';
+
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.bgCard,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx2, setSheetState) => Padding(
+          padding: EdgeInsets.fromLTRB(
+            20, 20, 20, MediaQuery.of(ctx2).viewInsets.bottom + 20,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(children: [
+                Icon(Icons.account_balance_wallet_rounded,
+                    size: 20, color: AppTheme.primary),
+                SizedBox(width: 8),
+                Text('Bakiye Duzenle',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              ]),
+              const SizedBox(height: 4),
+              Text('${payment['user_name'] ?? payment['user_email'] ?? '-'} (ID: $userId)',
+                  style: const TextStyle(fontSize: 12, color: AppTheme.textMuted)),
+              const SizedBox(height: 14),
+              Row(children: [
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => setSheetState(() => actionType = 'add'),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      decoration: BoxDecoration(
+                        color: actionType == 'add'
+                            ? AppTheme.success.withValues(alpha: 0.15)
+                            : AppTheme.glassBg,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                            color: actionType == 'add'
+                                ? AppTheme.success
+                                : AppTheme.glassBorder),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.add_rounded, size: 18,
+                              color: actionType == 'add' ? AppTheme.success : AppTheme.textMuted),
+                          const SizedBox(width: 4),
+                          Text('Ekle', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                              color: actionType == 'add' ? AppTheme.success : AppTheme.textMuted)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => setSheetState(() => actionType = 'deduct'),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      decoration: BoxDecoration(
+                        color: actionType == 'deduct'
+                            ? AppTheme.error.withValues(alpha: 0.15)
+                            : AppTheme.glassBg,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                            color: actionType == 'deduct'
+                                ? AppTheme.error
+                                : AppTheme.glassBorder),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.remove_rounded, size: 18,
+                              color: actionType == 'deduct' ? AppTheme.error : AppTheme.textMuted),
+                          const SizedBox(width: 4),
+                          Text('Dus', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                              color: actionType == 'deduct' ? AppTheme.error : AppTheme.textMuted)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 14),
+              TextField(
+                controller: amountCtrl,
+                keyboardType: TextInputType.number,
+                decoration: AppTheme.inputDecoration(
+                  hint: 'Tutar (TL)',
+                  prefixIcon: actionType == 'add' ? Icons.add_card_rounded : Icons.money_off_rounded,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: descCtrl,
+                decoration: AppTheme.inputDecoration(
+                  hint: 'Aciklama',
+                  prefixIcon: Icons.note_alt_outlined,
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    final amount = double.tryParse(amountCtrl.text);
+                    if (amount == null || amount <= 0) return;
+                    Navigator.pop(ctx);
+                    try {
+                      final result = await AdminApi()
+                          .updateBalance(userId, amount, actionType, descCtrl.text);
+                      if (mounted) {
+                        final before = result['balance_before'] ?? '?';
+                        final after = result['balance_after'] ?? '?';
+                        final sign = actionType == 'add' ? '+' : '-';
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                          content: Text(
+                              '$sign${_fmt.format(amount)} TL ${actionType == 'add' ? 'eklendi' : 'dusuldu'}\nBakiye: $before -> $after TL'),
+                          backgroundColor: actionType == 'add' ? AppTheme.success : AppTheme.warning,
+                          duration: const Duration(seconds: 3),
+                        ));
+                      }
+                      _load();
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content: Text('$e'), backgroundColor: AppTheme.error));
+                      }
+                    }
+                  },
+                  icon: Icon(actionType == 'add' ? Icons.save_rounded : Icons.remove_circle_outline, size: 18),
+                  label: Text(actionType == 'add' ? 'Bakiye Ekle' : 'Bakiye Dus'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: actionType == 'add' ? AppTheme.success : AppTheme.error,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
   void _showDetail(Map<String, dynamic> p) {
     final historyFuture = _fetchUserPaymentHistory(p);
     final userId = _userIdOf(p);
@@ -430,10 +600,12 @@ class _PaymentsTabState extends State<PaymentsTab> {
               if (p['note'] != null && '${p['note']}'.isNotEmpty)
                 _row('Not', '${p['note']}'),
               const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: userId == null ? null : () => _showBonusDialog(p),
-                icon: const Icon(Icons.add_card_rounded, size: 16),
-                label: const Text('Bonus Ekle'),
+              Row(children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: userId == null ? null : () => _showBonusDialog(p),
+                    icon: const Icon(Icons.add_card_rounded, size: 16),
+                    label: const Text('Bonus'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppTheme.success,
                   side: BorderSide(
@@ -442,9 +614,80 @@ class _PaymentsTabState extends State<PaymentsTab> {
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: userId == null ? null : () => _showBalanceEditDialog(p),
+                    icon: const Icon(Icons.account_balance_wallet_rounded, size: 16),
+                    label: const Text('Bakiye'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.primary,
+                      side: BorderSide(color: AppTheme.primary.withValues(alpha: 0.35)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+              ]),
               const SizedBox(height: 18),
+              // Balance log history
+              if (userId != null) ...[
+                const Text('Bakiye Geçmişi',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                FutureBuilder<Map<String, dynamic>>(
+                  future: AdminApi().getBalanceLogs(userId),
+                  builder: (context, snap) {
+                    if (snap.connectionState == ConnectionState.waiting) {
+                      return const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))));
+                    }
+                    final items = (snap.data?['items'] as List?) ?? [];
+                    if (items.isEmpty) {
+                      return Container(
+                        width: double.infinity, padding: const EdgeInsets.all(12),
+                        decoration: AppTheme.glassDecoration(radius: 12),
+                        child: const Text('Bakiye geçmişi bulunamadı.', style: TextStyle(fontSize: 12, color: AppTheme.textMuted)));
+                    }
+                    return Column(children: items.take(6).map((item) {
+                      final type = '${item['type'] ?? ''}';
+                      final isAdd = type.contains('add') || type.contains('payment') || type.contains('approve');
+                      final amt = double.tryParse('${item['amount']}') ?? 0;
+                      final desc = '${item['description'] ?? '-'}';
+                      final date = _formatDate(item['created_at']);
+                      final before = item['balance_before'] ?? '?';
+                      final after = item['balance_after'] ?? '?';
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(12),
+                        decoration: AppTheme.glassDecoration(radius: 12),
+                        child: Row(children: [
+                          Container(
+                            width: 32, height: 32,
+                            decoration: BoxDecoration(
+                              color: (isAdd ? AppTheme.success : AppTheme.error).withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(8)),
+                            child: Icon(isAdd ? Icons.arrow_downward_rounded : Icons.arrow_upward_rounded,
+                                size: 18, color: isAdd ? AppTheme.success : AppTheme.error)),
+                          const SizedBox(width: 10),
+                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(desc, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500), maxLines: 1, overflow: TextOverflow.ellipsis),
+                            const SizedBox(height: 2),
+                            Text('$date  •  $before → $after TL', style: const TextStyle(fontSize: 10, color: AppTheme.textMuted)),
+                          ])),
+                          Text('${isAdd ? '+' : '-'}${_fmt.format(amt)} ₺',
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
+                                  color: isAdd ? AppTheme.success : AppTheme.error)),
+                        ]));
+                    }).toList());
+                  },
+                ),
+                const SizedBox(height: 18),
+              ],
               const Text(
                 'Kullanıcının Geçmiş Ödemeleri',
                 style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
@@ -808,23 +1051,36 @@ class _PaymentsTabState extends State<PaymentsTab> {
 
               // Quick approve/reject for pending
               if (isPending) ...[
+                const SizedBox(width: 6),
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppTheme.success.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: IconButton(
+                      icon: const Icon(Icons.check_circle_rounded,
+                          size: 24, color: AppTheme.success),
+                      onPressed: () =>
+                          _handleActionLikeTelegram(payment, 'approve'),
+                      tooltip: 'Onayla',
+                      padding: const EdgeInsets.all(6),
+                      constraints: const BoxConstraints()),
+                ),
                 const SizedBox(width: 4),
-                IconButton(
-                    icon: const Icon(Icons.check_circle_rounded,
-                        size: 22, color: AppTheme.success),
-                    onPressed: () =>
-                        _handleActionLikeTelegram(payment, 'approve'),
-                    tooltip: 'Onayla',
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(maxWidth: 30)),
-                IconButton(
-                    icon: const Icon(Icons.cancel_rounded,
-                        size: 22, color: AppTheme.error),
-                    onPressed: () =>
-                        _handleActionLikeTelegram(payment, 'reject'),
-                    tooltip: 'Reddet',
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(maxWidth: 30)),
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppTheme.error.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: IconButton(
+                      icon: const Icon(Icons.cancel_rounded,
+                          size: 24, color: AppTheme.error),
+                      onPressed: () =>
+                          _handleActionLikeTelegram(payment, 'reject'),
+                      tooltip: 'Reddet',
+                      padding: const EdgeInsets.all(6),
+                      constraints: const BoxConstraints()),
+                ),
               ],
             ],
           ),
