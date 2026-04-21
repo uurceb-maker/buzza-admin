@@ -67,6 +67,77 @@ class AuthProvider extends ChangeNotifier {
 
   final AdminApi _api = AdminApi();
 
+  String _normalizeSiteUrl(String url) {
+    return url
+        .replaceAll(RegExp(r'/wp-admin.*$', caseSensitive: false), '')
+        .replaceAll(RegExp(r'/wp-json.*$', caseSensitive: false), '')
+        .replaceAll(RegExp(r'/+$'), '');
+  }
+
+  bool _looksLikeExpiredSessionError(Object error) {
+    final text = '$error'.toLowerCase();
+    return text.contains('oturum suresi doldu') ||
+        text.contains('session expired') ||
+        text.contains('token expired') ||
+        text.contains('invalid token') ||
+        text.contains('gecersiz token') ||
+        text.contains('sunucu bu oturumu dogrulamadi') ||
+        text.contains('sunucu bu oturum anahtarini kabul etmedi') ||
+        text.contains('unauthorized') ||
+        text.contains('401');
+  }
+
+  Map<String, dynamic>? _restoreStoredUser(SharedPreferences prefs) {
+    final rawUser = prefs.getString('user_json') ?? '';
+    if (rawUser.isNotEmpty) {
+      try {
+        final decoded = json.decode(rawUser);
+        if (decoded is Map<String, dynamic>) {
+          return decoded;
+        }
+      } catch (_) {}
+    }
+
+    final name = prefs.getString('user_name') ?? '';
+    final email = prefs.getString('user_email') ?? '';
+    if (name.isEmpty && email.isEmpty) return null;
+
+    return <String, dynamic>{
+      if (name.isNotEmpty) 'name': name,
+      if (email.isNotEmpty) 'email': email,
+    };
+  }
+
+  Future<void> _persistSession({
+    required String siteUrl,
+    required String token,
+    required Map<String, dynamic>? user,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final cleanUrl = _normalizeSiteUrl(siteUrl);
+    await prefs.setString('site_url', cleanUrl);
+    await prefs.setString('api_base_url', _api.baseUrl);
+    await prefs.setString('token', token);
+    await prefs.setString('buzza_admin_token', token);
+    await prefs.setString('user_name', user?['name'] ?? user?['login'] ?? '');
+    await prefs.setString('user_email', user?['email'] ?? '');
+    await prefs.setString('user_json', json.encode(user ?? <String, dynamic>{}));
+  }
+
+  Future<void> _clearPersistedSession({bool preserveRememberedLogin = true}) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('token');
+    await prefs.remove('buzza_admin_token');
+    await prefs.remove('site_url');
+    await prefs.remove('api_base_url');
+    await prefs.remove('user_name');
+    await prefs.remove('user_email');
+    await prefs.remove('user_json');
+    if (!preserveRememberedLogin) {
+      await prefs.clear();
+    }
+  }
+
   Map<String, dynamic> _extractUserFromResult(Map<String, dynamic> result) {
     final directUser = result['user'];
     if (directUser is Map) {
@@ -145,17 +216,21 @@ class AuthProvider extends ChangeNotifier {
       _isLoggedIn = true;
       _clearOtpState();
 
-      // Save session
+      await _persistSession(
+        siteUrl: url,
+        token: _api.token,
+        user: _user,
+      );
+
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('site_url', url);
-      await prefs.setString('api_base_url', _api.baseUrl);
-      await prefs.setString('token', _api.token);
-      await prefs.setString('user_name', _user?['name'] ?? '');
-      await prefs.setString('user_email', _user?['email'] ?? '');
       if (rememberMe) {
         await prefs.setBool('remember_me', true);
         await prefs.setString('saved_username', username);
         await prefs.setString('saved_password', password);
+      } else {
+        await prefs.setBool('remember_me', false);
+        await prefs.remove('saved_username');
+        await prefs.remove('saved_password');
       }
     } on OtpRequiredException {
       _isLoading = false;
@@ -184,8 +259,7 @@ class AuthProvider extends ChangeNotifier {
       _user = null;
       _isLoggedIn = false;
       _api.clearSession();
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('token');
+      await _clearPersistedSession();
       rethrow;
     } finally {
       _isLoading = false;
@@ -357,10 +431,7 @@ class AuthProvider extends ChangeNotifier {
     String? expiresAt,
     Map<String, dynamic>? userData,
   }) async {
-    final cleanUrl = siteUrl
-        .replaceAll(RegExp(r'/wp-admin.*$', caseSensitive: false), '')
-        .replaceAll(RegExp(r'/wp-json.*$', caseSensitive: false), '')
-        .replaceAll(RegExp(r'/+$'), '');
+    final cleanUrl = _normalizeSiteUrl(siteUrl);
 
     _api.setToken(token);
 
@@ -395,12 +466,13 @@ class AuthProvider extends ChangeNotifier {
     _isLoggedIn = true;
     _clearOtpState();
 
+    await _persistSession(
+      siteUrl: cleanUrl,
+      token: token,
+      user: _user,
+    );
+
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('token', token);
-    await prefs.setString('site_url', cleanUrl);
-    await prefs.setString('api_base_url', _api.baseUrl);
-    await prefs.setString('user_name', _user?['name'] ?? _user?['login'] ?? '');
-    await prefs.setString('user_email', _user?['email'] ?? '');
     await prefs.setBool('remember_me', true);
 
     notifyListeners();
@@ -414,7 +486,8 @@ class AuthProvider extends ChangeNotifier {
   /// Auto-login on startup
   Future<bool> tryAutoLogin() async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token') ?? '';
+    final token =
+        prefs.getString('token') ?? prefs.getString('buzza_admin_token') ?? '';
     final savedBaseUrl = prefs.getString('api_base_url') ?? '';
     final savedSiteUrl = prefs.getString('site_url') ?? '';
 
@@ -422,7 +495,13 @@ class AuthProvider extends ChangeNotifier {
       return false;
     }
 
+    final cleanUrl = _normalizeSiteUrl(
+      savedSiteUrl.isNotEmpty ? savedSiteUrl : savedBaseUrl,
+    );
+    final restoredUser = _restoreStoredUser(prefs);
+
     _api.setToken(token);
+    _user = restoredUser;
 
     // Kayıtlı baseUrl ile dene
     if (savedBaseUrl.isNotEmpty) {
@@ -437,19 +516,26 @@ class AuthProvider extends ChangeNotifier {
               ? savedBaseUrl
               : savedBaseUrl.replaceAll(RegExp(r'buzza-security/v1|buzza/admin/v1'), 'buzza-admin/v1');
           _api.setBaseUrl(adminUrl);
-          await prefs.setString('api_base_url', adminUrl);
+          await _persistSession(
+            siteUrl: cleanUrl,
+            token: token,
+            user: _user,
+          );
           notifyListeners();
           return true;
         }
-      } catch (_) {}
+      } catch (error) {
+        if (_looksLikeExpiredSessionError(error)) {
+          _user = null;
+          _isLoggedIn = false;
+          _api.clearSession();
+          await _clearPersistedSession();
+          return false;
+        }
+      }
     }
 
     // Farklı namespace'lerle dene (OTP token buzza-security'de, normal token buzza-admin'de)
-    final cleanUrl = (savedSiteUrl.isNotEmpty ? savedSiteUrl : savedBaseUrl)
-        .replaceAll(RegExp(r'/wp-json.*$', caseSensitive: false), '')
-        .replaceAll(RegExp(r'/wp-admin.*$', caseSensitive: false), '')
-        .replaceAll(RegExp(r'/+$'), '');
-
     for (final ns in const ['buzza-security/v1', 'buzza-admin/v1']) {
       final candidateUrl = '$cleanUrl/wp-json/$ns';
       if (candidateUrl == savedBaseUrl) continue; // Zaten denendi
@@ -462,23 +548,38 @@ class AuthProvider extends ChangeNotifier {
           // Admin endpoint'leri buzza-admin/v1'de — oraya set et
           final adminUrl = '$cleanUrl/wp-json/buzza-admin/v1';
           _api.setBaseUrl(adminUrl);
-          await prefs.setString('api_base_url', adminUrl);
+          await _persistSession(
+            siteUrl: cleanUrl,
+            token: token,
+            user: _user,
+          );
           notifyListeners();
           return true;
         }
-      } catch (_) {}
+      } catch (error) {
+        if (_looksLikeExpiredSessionError(error)) {
+          _user = null;
+          _isLoggedIn = false;
+          _api.clearSession();
+          await _clearPersistedSession();
+          return false;
+        }
+      }
     }
 
     // Token geçersiz — kullanıcı manuel giriş yapsın
-    return false;
+    _api.setBaseUrl('$cleanUrl/wp-json/buzza-admin/v1');
+    _isLoggedIn = true;
+    _user ??= <String, dynamic>{};
+    notifyListeners();
+    return true;
   }
 
   Future<void> logout() async {
     _user = null;
     _isLoggedIn = false;
     _api.clearSession();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
+    await _clearPersistedSession(preserveRememberedLogin: false);
     notifyListeners();
   }
 }

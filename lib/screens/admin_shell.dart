@@ -25,6 +25,7 @@ class AdminShell extends StatefulWidget {
 
 class _AdminShellState extends State<AdminShell> {
   int _currentIndex = 0;
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final GlobalKey<KatalogScreenState> _katalogKey =
       GlobalKey<KatalogScreenState>();
 
@@ -86,7 +87,8 @@ class _AdminShellState extends State<AdminShell> {
       notifService.unreadCount.value = 0;
     }
     _closeNotifPanel();
-    if (Navigator.of(context).canPop()) {
+    // Sadece mobil drawer aciksa kapat; route stack'te geri gitme.
+    if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
       Navigator.of(context).pop();
     }
   }
@@ -149,7 +151,7 @@ class _AdminShellState extends State<AdminShell> {
     final auth = Provider.of<AuthProvider>(context, listen: false);
     await auth.logout();
     if (!mounted) return;
-    Navigator.pushReplacement(
+    Navigator.pushAndRemoveUntil(
       context,
       PageRouteBuilder(
         pageBuilder: (_, __, ___) => const LoginScreen(),
@@ -158,6 +160,7 @@ class _AdminShellState extends State<AdminShell> {
           return FadeTransition(opacity: animation, child: child);
         },
       ),
+      (route) => false,
     );
   }
 
@@ -190,6 +193,7 @@ class _AdminShellState extends State<AdminShell> {
     final bottomTabIndexes = _bottomTabIndexes(visibleTabIndexes);
 
     return Scaffold(
+      key: _scaffoldKey,
       extendBody: !isDesktop,
       appBar: _buildAppBar(isDesktop, activeIndex),
       drawer:

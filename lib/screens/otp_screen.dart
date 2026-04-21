@@ -204,7 +204,7 @@ class _OtpScreenState extends State<OtpScreen>
         await Future.delayed(const Duration(milliseconds: 500));
         if (!mounted) return;
 
-        Navigator.pushReplacement(
+        Navigator.pushAndRemoveUntil(
           context,
           PageRouteBuilder(
             pageBuilder: (_, __, ___) => const AdminShell(),
@@ -212,6 +212,7 @@ class _OtpScreenState extends State<OtpScreen>
             transitionsBuilder: (_, animation, __, child) =>
                 FadeTransition(opacity: animation, child: child),
           ),
+          (route) => false,
         );
       } else {
         final msg = data['data']?['message'] ?? 'Doğrulama başarısız.';

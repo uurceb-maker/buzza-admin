@@ -80,7 +80,7 @@ class _LoginScreenState extends State<LoginScreen>
       );
       if (!mounted) return;
 
-      Navigator.pushReplacement(
+      Navigator.pushAndRemoveUntil(
         context,
         PageRouteBuilder(
           pageBuilder: (_, __, ___) => const AdminShell(),
@@ -88,6 +88,7 @@ class _LoginScreenState extends State<LoginScreen>
           transitionsBuilder: (_, animation, __, child) =>
               FadeTransition(opacity: animation, child: child),
         ),
+        (route) => false,
       );
     } on OtpRequiredException catch (otp) {
       if (!mounted) return;
@@ -107,7 +108,7 @@ class _LoginScreenState extends State<LoginScreen>
       );
       // OTP başarılıysa AdminShell'e yönlendir (OtpScreen kendi içinde halleder)
       if (result == true && mounted) {
-        Navigator.pushReplacement(
+        Navigator.pushAndRemoveUntil(
           context,
           PageRouteBuilder(
             pageBuilder: (_, __, ___) => const AdminShell(),
@@ -115,6 +116,7 @@ class _LoginScreenState extends State<LoginScreen>
             transitionsBuilder: (_, animation, __, child) =>
                 FadeTransition(opacity: animation, child: child),
           ),
+          (route) => false,
         );
       }
     } catch (e) {

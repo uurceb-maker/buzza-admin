@@ -103,6 +103,18 @@ class SupportNotificationService with WidgetsBindingObserver {
       final prefs   = await SharedPreferences.getInstance();
       final sinceId  = prefs.getInt(_prefLastId) ?? 0;
       final api      = AdminApi();
+      final savedBaseUrl = prefs.getString('api_base_url') ?? '';
+      final savedSiteUrl = prefs.getString('site_url') ?? '';
+
+      if (!api.hasToken) {
+        final token = prefs.getString('token') ?? prefs.getString('buzza_admin_token') ?? '';
+        if (token.isNotEmpty) api.setToken(token);
+      }
+      if (savedBaseUrl.isNotEmpty) {
+        api.setBaseUrl(savedBaseUrl);
+      } else if (savedSiteUrl.isNotEmpty) {
+        api.setBaseUrl('$savedSiteUrl/wp-json/buzza-admin/v1');
+      }
 
       final result   = await api.getSupportUnread(sinceId: sinceId);
       final items    = result['items'] as List<dynamic>? ?? [];
@@ -147,11 +159,18 @@ class SupportNotificationService with WidgetsBindingObserver {
       final prefs   = await SharedPreferences.getInstance();
       final sinceId  = prefs.getInt(_prefLastId) ?? 0;
       final api      = AdminApi();
+      final savedBaseUrl = prefs.getString('api_base_url') ?? '';
+      final savedSiteUrl = prefs.getString('site_url') ?? '';
 
       // Oturum yoksa SharedPreferences'tan token ile devam et
       if (!api.hasToken) {
-        final token = prefs.getString('buzza_admin_token') ?? '';
+        final token = prefs.getString('token') ?? prefs.getString('buzza_admin_token') ?? '';
         if (token.isNotEmpty) api.setToken(token);
+      }
+      if (savedBaseUrl.isNotEmpty) {
+        api.setBaseUrl(savedBaseUrl);
+      } else if (savedSiteUrl.isNotEmpty) {
+        api.setBaseUrl('$savedSiteUrl/wp-json/buzza-admin/v1');
       }
 
       final result = await api.getSupportUnread(sinceId: sinceId);

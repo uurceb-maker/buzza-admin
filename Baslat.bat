@@ -2,7 +2,7 @@
 chcp 65001 >nul
 setlocal EnableDelayedExpansion
 
-set "FLUTTER=C:\flutter\bin\flutter.bat"
+set "FLUTTER=D:\gerekenler\flutter\bin\flutter.bat"
 
 :: Bat dosyasinin bulundugu klasoru proje dizini olarak al
 pushd "%~dp0"
