@@ -81,6 +81,25 @@ flutter build ios --release
 flutter build windows --release
 ```
 
+## Cihaza Kurulum Adımları
+
+### Android İçin Kurulum (Normal APK Yükleme)
+Masaüstünüze kopyaladığınız veya derlediğiniz **.apk** dosyasını kullanarak Android cihazlara kurulum yapmak çok basittir:
+1. **Dosyayı Telefa Gönderin:** APK dosyasını bilgisayardan telefonunuza gönderin (WhatsApp, Telegram, Google Drive, Mail veya USB kablosu ile).
+2. **Dosyayı Açın:** Telefondaki Dosya Yöneticisi'ne girip indirdiğiniz `.apk` dosyasına dokunun.
+3. **Bilinmeyen Kaynaklar İzni:** Ekrana "Güvenliğiniz için cihazınızın bilinmeyen kaynaklardan alınan uygulamaları yüklemesine izin verilmiyor" gibi bir uyarı çıkarsa: Ayarlar'a tıklayın, "Bu kaynaktan izin ver" (veya Bilinmeyen Kaynakları Yükle) seçeneğini aktif hale getirin.
+4. **Kurulum:** Geri gelip "Yükle" butonuna basın. Kurulum bittiğinde uygulamanız ana ekrana gelecektir.
+
+### iOS İçin Sideloadly ile Kurulum Adımları
+*Önemli Not: iOS cihazlara kurulum yapabilmeniz için uygulamanın Apple formatı olan **.ipa** uzantılı dosyasına ihtiyacınız var. Aşağıdaki adımlar bir .ipa dosyanız olduğu varsayılarak yazılmıştır:*
+
+1. **Gerekli Programları Kurun:** Bilgisayarınıza (Windows veya Mac) Sideloadly programını indirin ve kurun. Windows kullanıyorsanız, Sideloadly'nin çalışması için Apple'ın sitesinden iTunes ve iCloud'un kurulu olması gerekir.
+2. **Telefonu Bilgisayara Bağlayın:** iPhone'unuzu kablo ile bilgisayara bağlayın. "Bu Bilgisayara Güven" uyarısı çıkarsa "Güven" diyerek şifrenizi girin.
+3. **Sideloadly'i Çalıştırın ve Dosyayı Yükleyin:** Sideloadly programını açın. "Device" kısmında iPhone'unuzun göründüğünden emin olun. Elinizdeki **.ipa** dosyasını sürükleyip büyük IPA ikonunun üzerine bırakın.
+4. **Apple Kimliğinizi Girin:** "Apple ID" kutucuğuna Apple e-posta adresinizi yazın. "Start" butonuna tıklayın. Sorulduğunda şifrenizi girip onaylayın. "Done." yazısını görene kadar bekleyin.
+5. **Telefondan Uygulamaya Güven İzni Verme:** iPhone'da Ayarlar > Genel > VPN ve Aygıt Yönetimi kısmına gidin. "Geliştirici Uygulaması" altındaki e-posta adresinize tıklayın. "Güven [sizin e-postanız]" seçeneğine dokunun ve onaylayın.
+6. **Geliştirici Modunu Açma (iOS 16+):** Ayarlar > Gizlilik ve Güvenlik > Geliştirici Modu menüsünden Geliştirici Modu'nu aktif hale getirin. Cihaz yeniden başlayacaktır.
+
 ## Kullanim Akisi
 
 1. Uygulamayi ac, `Site URL`, `Kullanici Adi`, `Sifre` ile giris yap.
