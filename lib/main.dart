@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +9,7 @@ import 'providers/auth_provider.dart';
 import 'screens/admin_shell.dart';
 import 'screens/login_screen.dart';
 import 'services/support_notification_service.dart';
+import 'services/update_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -58,7 +61,7 @@ class _SplashScreenState extends State<_SplashScreen> {
     final success = await auth.tryAutoLogin();
     if (!mounted) return;
 
-    Navigator.pushReplacement(
+    await Navigator.pushReplacement(
       context,
       PageRouteBuilder(
         pageBuilder: (_, __, ___) =>
@@ -68,6 +71,9 @@ class _SplashScreenState extends State<_SplashScreen> {
             FadeTransition(opacity: animation, child: child),
       ),
     );
+
+    if (!mounted) return;
+    unawaited(UpdateService.instance.checkForUpdate(context, silent: true));
   }
 
   @override

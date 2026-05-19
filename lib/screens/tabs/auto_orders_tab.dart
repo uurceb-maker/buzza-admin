@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 
 import '../../config/theme.dart';
 import '../../models/auto_order.dart';
+import '../../providers/auth_provider.dart';
 import '../../services/admin_api.dart';
 import 'auto_order_create_dialog.dart';
 import 'auto_order_detail_sheet.dart';
@@ -68,8 +70,10 @@ class _AutoOrdersTabState extends State<AutoOrdersTab> {
         _loading = false;
       });
     } on AuthExpiredException catch (_) {
-      _toast('Oturum süresi doldu. Tekrar giriş yapın.', error: true);
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+        context.read<AuthProvider>().logout();
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);

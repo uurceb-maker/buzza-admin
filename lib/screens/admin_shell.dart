@@ -175,6 +175,23 @@ class _AdminShellState extends State<AdminShell> {
     final auth = Provider.of<AuthProvider>(context);
     final isDesktop = _isDesktop(context);
 
+    // Oturum sona erdiğinde otomatik olarak login ekranına yönlendir
+    if (!auth.isLoggedIn) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Navigator.of(context).pushAndRemoveUntil(
+          PageRouteBuilder(
+            pageBuilder: (_, __, ___) => const LoginScreen(),
+            transitionDuration: const Duration(milliseconds: 350),
+            transitionsBuilder: (_, animation, __, child) =>
+                FadeTransition(opacity: animation, child: child),
+          ),
+          (route) => false,
+        );
+      });
+      return const SizedBox.shrink();
+    }
+
     final visibleTabIndexes = _visibleTabIndexes(auth);
     if (visibleTabIndexes.isEmpty) {
       return Scaffold(

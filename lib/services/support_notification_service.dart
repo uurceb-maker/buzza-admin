@@ -69,7 +69,7 @@ class SupportNotificationService with WidgetsBindingObserver {
           _bgTaskName,
           frequency: const Duration(minutes: 15),
           initialDelay: const Duration(minutes: 3),
-          existingWorkPolicy: ExistingWorkPolicy.keep,
+          existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
           constraints: Constraints(networkType: NetworkType.connected),
           backoffPolicy: BackoffPolicy.exponential,
           backoffPolicyDelay: const Duration(minutes: 1),

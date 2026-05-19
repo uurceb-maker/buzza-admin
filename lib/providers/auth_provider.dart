@@ -67,6 +67,21 @@ class AuthProvider extends ChangeNotifier {
 
   final AdminApi _api = AdminApi();
 
+  AuthProvider() {
+    // API'den 401 geldiğinde otomatik oturum kapat
+    _api.onAuthExpired = _handleApiAuthExpiry;
+  }
+
+  void _handleApiAuthExpiry() {
+    // Login veya verify işlemi sırasında tetiklenirse yoksay
+    if (!_isLoggedIn || _isLoading) return;
+    _user = null;
+    _isLoggedIn = false;
+    _api.clearSession();
+    _clearPersistedSession();
+    notifyListeners();
+  }
+
   String _normalizeSiteUrl(String url) {
     return url
         .replaceAll(RegExp(r'/wp-admin.*$', caseSensitive: false), '')
@@ -75,16 +90,24 @@ class AuthProvider extends ChangeNotifier {
   }
 
   bool _looksLikeExpiredSessionError(Object error) {
-    final text = '$error'.toLowerCase();
-    return text.contains('oturum suresi doldu') ||
-        text.contains('session expired') ||
-        text.contains('token expired') ||
-        text.contains('invalid token') ||
-        text.contains('gecersiz token') ||
-        text.contains('sunucu bu oturumu dogrulamadi') ||
-        text.contains('sunucu bu oturum anahtarini kabul etmedi') ||
-        text.contains('unauthorized') ||
-        text.contains('401');
+    if (error is AuthExpiredException) return true;
+    final normalized = '$error'
+        .toLowerCase()
+        .replaceAll('ü', 'u')
+        .replaceAll('ı', 'i')
+        .replaceAll('ş', 's')
+        .replaceAll('ğ', 'g')
+        .replaceAll('ç', 'c')
+        .replaceAll('ö', 'o');
+    return normalized.contains('oturum suresi doldu') ||
+        normalized.contains('session expired') ||
+        normalized.contains('token expired') ||
+        normalized.contains('invalid token') ||
+        normalized.contains('gecersiz token') ||
+        normalized.contains('sunucu bu oturumu dogrulamadi') ||
+        normalized.contains('sunucu bu oturum anahtarini kabul etmedi') ||
+        normalized.contains('unauthorized') ||
+        normalized.contains('401');
   }
 
   Map<String, dynamic>? _restoreStoredUser(SharedPreferences prefs) {
@@ -485,6 +508,8 @@ class AuthProvider extends ChangeNotifier {
 
   /// Auto-login on startup
   Future<bool> tryAutoLogin() async {
+    _isLoading = true; // verify sırasında onAuthExpired callback'ini kapat
+    try {
     final prefs = await SharedPreferences.getInstance();
     final token =
         prefs.getString('token') ?? prefs.getString('buzza_admin_token') ?? '';
@@ -573,6 +598,9 @@ class AuthProvider extends ChangeNotifier {
     _user ??= <String, dynamic>{};
     notifyListeners();
     return true;
+    } finally {
+      _isLoading = false;
+    }
   }
 
   Future<void> logout() async {

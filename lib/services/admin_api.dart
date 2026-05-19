@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../config/constants.dart';
@@ -13,6 +14,9 @@ class AdminApi {
   factory AdminApi() => _instance;
 
   AdminApi._internal();
+
+  /// 401 alındığında çağrılır — AuthProvider bu callback'i kaydeder
+  VoidCallback? onAuthExpired;
 
   String _token = '';
   String _baseUrl = AppConstants.apiBase;
@@ -210,6 +214,7 @@ class AdminApi {
       }
 
       if (response.statusCode == 401) {
+        onAuthExpired?.call();
         throw AuthExpiredException('Oturum süresi doldu');
       }
 
@@ -1367,6 +1372,10 @@ class AdminApi {
         if (data['ok'] == true || data['success'] == true) {
           return <String, dynamic>{...data, 'valid': true};
         }
+        // Sunucu açıkça geçersiz demiyorsa (yani 200 döndüyse) token geçerli say
+        if (!_isExplicitlyInvalidVerification(data)) {
+          return <String, dynamic>{...data, 'valid': true};
+        }
       } on ApiException catch (e) {
         if (_isMissingRoute(e)) continue;
         rethrow;
@@ -1388,7 +1397,13 @@ class AdminApi {
       ]);
       return _normalizeDashboard(data);
     } on ApiException catch (error) {
-      if (!_isMissingRoute(error)) rethrow;
+      // Route bulunamadıysa veya WordPress kritik hata verdiyse,
+      // diğer endpointlerden veri toplamayı dene
+      final msg = _normalizeMatchText(error.message);
+      final isCriticalError = msg.contains('kritik bir hata') ||
+          msg.contains('critical error') ||
+          msg.contains('500');
+      if (!_isMissingRoute(error) && !isCriticalError) rethrow;
       return _buildDashboardFromAvailableEndpoints();
     }
   }
@@ -2463,6 +2478,7 @@ class AdminApi {
       }
 
       if (response.statusCode == 401) {
+        onAuthExpired?.call();
         throw AuthExpiredException('Oturum suresi doldu');
       }
 
@@ -2471,6 +2487,7 @@ class AdminApi {
           final extracted = _extractErrorMessage(decoded);
           if (response.statusCode == 403 &&
               _looksLikeExpiredSession(extracted)) {
+            onAuthExpired?.call();
             throw AuthExpiredException('Oturum suresi doldu');
           }
           lastError = ApiException(extracted);
@@ -2753,6 +2770,7 @@ class AdminApi {
     final respBody = utf8.decode(response.bodyBytes).trim();
 
     if (response.statusCode == 401) {
+      onAuthExpired?.call();
       throw AuthExpiredException('Oturum suresi doldu');
     }
 
@@ -2875,6 +2893,7 @@ class AdminApi {
       }
       final decoded = json.decode(body);
       if (streamed.statusCode == 401) {
+        onAuthExpired?.call();
         throw AuthExpiredException('Oturum suresi doldu');
       }
       if (streamed.statusCode >= 400) {
